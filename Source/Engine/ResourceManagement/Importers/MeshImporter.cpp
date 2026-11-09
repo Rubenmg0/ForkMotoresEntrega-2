@@ -1,111 +1,125 @@
 #include "MeshImporter.h"
-#include "../../Engine.h"
-#include "../../Scene/Scene.h"
-#include "../../Scene/GameObjects/GameObject.h"
-#include "../../Scene/GameObjects/Components/TransformComponent.h"
-#include "../../Scene/GameObjects/Components/MeshComponent.h"
-#include "../../Scene/GameObjects/Components/MaterialComponent.h"
-#include "../../Render/3DModels/ModelLoader.h"
+#include "../../FileSystem/FileSystem.h"
 #include "../../../Utils/Log.h"
 
-#include <filesystem>
-#include <algorithm>
+#include <cstdint>
+#include <cstring>
 
-bool MeshImporter::IsSupportedExtension(const std::string& extension)
+namespace
 {
-    std::string ext = extension;
-    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-    return (ext == ".fbx" || ext == ".obj" || ext == ".dae");
+	constexpr char MESH_MAGIC[4] = { 'M', 'M', 'S', 'H' };
+	constexpr uint32_t MESH_VERSION = 1;
+
+	struct MeshFileHeader
+	{
+		char magic[4];
+		uint32_t version;
+		uint32_t vertexCount;
+		uint32_t indexCount;
+		float aabbMin[3];
+		float aabbMax[3];
+	};
+	static_assert(sizeof(MeshFileHeader) == 40, "La cabecera .mesh debe ocupar 40 bytes");
+
+	// El formato copia los vertices tal cual estan en memoria: Vertex debe ser 8 floats seguidos
+	static_assert(sizeof(Vertex) == 8 * sizeof(float), "Vertex debe ser posicion(3) + normal(3) + uv(2) sin relleno");
 }
 
-std::unique_ptr<Primitive> MeshImporter::ImportMesh(const std::string& filePath)
+bool MeshImporter::Save(const std::vector<Vertex>& vertices, const std::vector<unsigned int>& indices, const std::string& libraryPath)
 {
-    LOG("[MeshImporter] Importando malla desde: %s", filePath.c_str());
-    auto loadedMesh = ModelLoader::LoadFBX(filePath);
-    if (!loadedMesh)
-    {
-        LOG_ERROR("[MeshImporter] Error al importar la malla: %s", filePath.c_str());
-        return nullptr;
-    }
-    return loadedMesh;
+	if (vertices.empty() || indices.empty())
+	{
+		LOG_ERROR("[MeshImporter] Malla vacia, no se guarda '%s'", libraryPath.c_str());
+		return false;
+	}
+
+	MeshFileHeader header{};
+	std::memcpy(header.magic, MESH_MAGIC, sizeof(MESH_MAGIC));
+	header.version = MESH_VERSION;
+	header.vertexCount = static_cast<uint32_t>(vertices.size());
+	header.indexCount = static_cast<uint32_t>(indices.size());
+
+	glm::vec3 minPoint = vertices[0].position;
+	glm::vec3 maxPoint = vertices[0].position;
+	for (const Vertex& vertex : vertices)
+	{
+		minPoint = glm::min(minPoint, vertex.position);
+		maxPoint = glm::max(maxPoint, vertex.position);
+	}
+	for (int i = 0; i < 3; ++i)
+	{
+		header.aabbMin[i] = minPoint[i];
+		header.aabbMax[i] = maxPoint[i];
+	}
+
+	const size_t vertexBytes = vertices.size() * sizeof(Vertex);
+	const size_t indexBytes = indices.size() * sizeof(uint32_t);
+
+	// Un unico buffer -> una unica escritura a disco
+	std::vector<char> buffer(sizeof(MeshFileHeader) + vertexBytes + indexBytes);
+	char* cursor = buffer.data();
+	std::memcpy(cursor, &header, sizeof(MeshFileHeader));
+	cursor += sizeof(MeshFileHeader);
+	std::memcpy(cursor, vertices.data(), vertexBytes);
+	cursor += vertexBytes;
+	for (unsigned int index : indices)
+	{
+		const uint32_t value = static_cast<uint32_t>(index);
+		std::memcpy(cursor, &value, sizeof(uint32_t));
+		cursor += sizeof(uint32_t);
+	}
+
+	return FileSystem::WriteBinary(libraryPath, buffer.data(), buffer.size());
 }
 
-GameObject* MeshImporter::ImportToScene(const std::string& filePath, GameObject* parent)
+std::unique_ptr<Primitive> MeshImporter::Load(const std::string& libraryPath)
 {
-    Scene* scene = Engine::GetInstance().scene.get();
-    if (!scene)
-    {
-        LOG_ERROR("[MeshImporter] No se puede importar a la escena: módulo Scene no disponible.");
-        return nullptr;
-    }
+	std::vector<char> data;
+	if (!FileSystem::ReadBinary(libraryPath, data) || data.size() < sizeof(MeshFileHeader))
+	{
+		LOG_ERROR("[MeshImporter] No se pudo leer '%s'", libraryPath.c_str());
+		return nullptr;
+	}
 
-    auto subMeshes = ModelLoader::LoadFBXMeshes(filePath);
-    if (subMeshes.empty())
-    {
-        LOG_ERROR("[MeshImporter] No se encontraron mallas válidas en: %s", filePath.c_str());
-        return nullptr;
-    }
+	MeshFileHeader header{};
+	std::memcpy(&header, data.data(), sizeof(MeshFileHeader));
+	if (std::memcmp(header.magic, MESH_MAGIC, sizeof(MESH_MAGIC)) != 0 || header.version != MESH_VERSION)
+	{
+		LOG_ERROR("[MeshImporter] '%s' no es un fichero .mesh valido", libraryPath.c_str());
+		return nullptr;
+	}
 
-    std::filesystem::path p(filePath);
-    std::string stemName = p.stem().string();
-    if (stemName.empty()) stemName = "ImportedModel";
-    std::string uniqueRootName = scene->MakeUniqueName(stemName);
+	const size_t vertexBytes = static_cast<size_t>(header.vertexCount) * sizeof(Vertex);
+	const size_t indexBytes = static_cast<size_t>(header.indexCount) * sizeof(uint32_t);
+	if (header.vertexCount == 0 || header.indexCount == 0 || data.size() < sizeof(MeshFileHeader) + vertexBytes + indexBytes)
+	{
+		LOG_ERROR("[MeshImporter] '%s' esta vacio o incompleto", libraryPath.c_str());
+		return nullptr;
+	}
 
-    // Si el archivo solo tiene 1 malla -> creamos un único GameObject directo
-    if (subMeshes.size() == 1)
-    {
-        auto newObj = std::make_unique<GameObject>(uniqueRootName);
+	const char* cursor = data.data() + sizeof(MeshFileHeader);
 
-        auto trans = std::make_unique<TransformComponent>(newObj.get());
-        trans->SetPosition(glm::vec3(0.0f, 0.0f, 0.0f));
-        newObj->AddComponent(std::move(trans));
+	std::vector<Vertex> vertices(header.vertexCount);
+	std::memcpy(vertices.data(), cursor, vertexBytes);
+	cursor += vertexBytes;
 
-        auto mesh = std::make_unique<MeshComponent>(newObj.get(), std::move(subMeshes[0].primitive));
-        newObj->AddComponent(std::move(mesh));
+	std::vector<unsigned int> indices(header.indexCount);
+	for (uint32_t i = 0; i < header.indexCount; ++i)
+	{
+		uint32_t value = 0;
+		std::memcpy(&value, cursor, sizeof(uint32_t));
+		cursor += sizeof(uint32_t);
 
-        auto mat = std::make_unique<MaterialComponent>(newObj.get());
-        mat->SetColor(glm::vec4(1.0f, 1.0f, 1.0f, 1.0f));
-        mat->SetUseTexture(false);
-        newObj->AddComponent(std::move(mat));
+		// Proteccion contra ficheros corruptos: un indice fuera de rango haria fallar a la GPU
+		if (value >= header.vertexCount)
+		{
+			LOG_ERROR("[MeshImporter] Indice fuera de rango en '%s'", libraryPath.c_str());
+			return nullptr;
+		}
+		indices[i] = value;
+	}
 
-        GameObject* registered = scene->Register(std::move(newObj), parent);
-        scene->SetSelected(registered);
-
-        LOG("[MeshImporter] Modelo simple '%s' importado en la escena", uniqueRootName.c_str());
-        return registered;
-    }
-
-    // Si el archivo tiene múltiples partes -> creamos un GameObject padre y un hijo por cada parte
-    auto rootObj = std::make_unique<GameObject>(uniqueRootName);
-    auto rootTrans = std::make_unique<TransformComponent>(rootObj.get());
-    rootTrans->SetPosition(glm::vec3(0.0f, 0.0f, 0.0f));
-    rootObj->AddComponent(std::move(rootTrans));
-
-    GameObject* registeredRoot = scene->Register(std::move(rootObj), parent);
-
-    for (size_t i = 0; i < subMeshes.size(); ++i)
-    {
-        std::string partBaseName = subMeshes[i].name.empty() ? (stemName + "_Part_" + std::to_string(i + 1)) : subMeshes[i].name;
-        std::string uniquePartName = scene->MakeUniqueName(partBaseName);
-
-        auto childObj = std::make_unique<GameObject>(uniquePartName);
-
-        auto childTrans = std::make_unique<TransformComponent>(childObj.get());
-        childTrans->SetPosition(glm::vec3(0.0f, 0.0f, 0.0f));
-        childObj->AddComponent(std::move(childTrans));
-
-        auto childMesh = std::make_unique<MeshComponent>(childObj.get(), std::move(subMeshes[i].primitive));
-        childObj->AddComponent(std::move(childMesh));
-
-        auto childMat = std::make_unique<MaterialComponent>(childObj.get());
-        childMat->SetColor(glm::vec4(1.0f, 1.0f, 1.0f, 1.0f));
-        childMat->SetUseTexture(false);
-        childObj->AddComponent(std::move(childMat));
-
-        scene->Register(std::move(childObj), registeredRoot);
-    }
-
-    scene->SetSelected(registeredRoot);
-    LOG("[MeshImporter] Modelo compuesto '%s' importado con %zu partes hijas", uniqueRootName.c_str(), subMeshes.size());
-    return registeredRoot;
+	auto primitive = std::make_unique<Primitive>();
+	primitive->Init(std::move(vertices), std::move(indices));
+	return primitive;
 }

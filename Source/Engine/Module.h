@@ -13,6 +13,9 @@ public:
 	{
 	}
 
+	// Destructor virtual: los modulos se guardan como punteros a Module
+	virtual ~Module() = default;
+
 	void Init()
 	{
 		active = true;

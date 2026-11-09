@@ -1,6 +1,7 @@
 #include "GameObject.h"
 #include "./Components/Component.h"
 #include "./Components/TransformComponent.h"
+#include "./Components/MeshComponent.h"
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/matrix_decompose.hpp>
 #include <glm/gtx/euler_angles.hpp>
@@ -11,13 +12,18 @@
 #include <tracy/Tracy.hpp>
 #endif
 
+// Empieza en 1 para que un octree recien creado (version 0) se construya la primera vez
+uint64_t GameObject::spatialVersion = 1;
+
 GameObject::GameObject(const std::string& name, GameUUID id) : uuid(id), name(name), parent(nullptr)
 {
 }
 
 GameObject::GameObject(const GameObject& other)
-    : uuid(GameUUID()), name(other.name), active(other.active), parent(nullptr)
+    : uuid(GameUUID()), active(other.active), name(other.name), parent(nullptr)
 {
+    // El array se recorre en orden: el Transform (indice 0) se clona antes que la camara,
+    // que lo necesita en su constructor
     for (const auto& comp : other.components)
     {
         if (comp)
@@ -48,6 +54,7 @@ GameObject& GameObject::operator=(const GameObject& other)
             components[i].reset();
         }
     }
+    MarkSpatialDirty();
     return *this;
 }
 
@@ -99,9 +106,49 @@ void GameObject::AddComponent(std::unique_ptr<Component> component)
     // Asignar directamente en el índice del enum correspondiente
     ComponentType type = component->GetType();
     components[type] = std::move(component);
+
+    if (type == COMPONENT_MESH || type == COMPONENT_TRANSFORM)
+    {
+        MarkSpatialDirty();
+    }
 }
 
-bool GameObject::SetParent(GameObject* newParent)
+void GameObject::RemoveComponent(ComponentType type)
+{
+    // El Transform es obligatorio (la camara y la jerarquia dependen de el)
+    if (type == COMPONENT_TRANSFORM || type >= COMPONENT_COUNT) return;
+
+    components[type].reset();
+    if (type == COMPONENT_MESH)
+    {
+        MarkSpatialDirty();
+    }
+}
+
+void GameObject::Enable()
+{
+    if (active) return;
+    active = true;
+    MarkSpatialDirty();
+}
+
+void GameObject::Disable()
+{
+    if (!active) return;
+    active = false;
+    MarkSpatialDirty();
+}
+
+bool GameObject::IsActiveInHierarchy() const
+{
+    for (const GameObject* node = this; node != nullptr; node = node->parent)
+    {
+        if (!node->active) return false;
+    }
+    return true;
+}
+
+bool GameObject::SetParent(GameObject* newParent, bool keepWorldTransform)
 {
     if (newParent == parent) return true;
 
@@ -128,7 +175,7 @@ bool GameObject::SetParent(GameObject* newParent)
     }
 
     // Recalculamos el Transform local para que mantenga su posición, rotación y tamaño en el mundo
-    if (trans)
+    if (trans && keepWorldTransform)
     {
         glm::mat4 newParentWorld = parent ? parent->GetWorldMatrix() : glm::mat4(1.0f);
         glm::mat4 newLocalMatrix = glm::inverse(newParentWorld) * oldWorldMatrix;
@@ -159,6 +206,9 @@ bool GameObject::SetParent(GameObject* newParent)
     }
 
     InvalidateWorldTransform();
+
+    // Puede haber cambiado de mundo (y de "activo en jerarquia"): el octree debe actualizarse
+    MarkSpatialDirty();
     return true;
 }
 
@@ -206,4 +256,32 @@ void GameObject::InvalidateWorldTransform()
     {
         child->InvalidateWorldTransform();
     }
+}
+
+AABB GameObject::GetWorldAABB(bool includeChildren) const
+{
+    AABB result;
+
+    const MeshComponent* mesh = GetComponent<MeshComponent>();
+    if (mesh != nullptr && mesh->IsActive())
+    {
+        const AABB local = mesh->GetLocalAABB();
+        if (local.IsValid())
+        {
+            // AABB local transformada por la matriz de mundo -> nueva AABB alineada con los ejes del mundo
+            result.Enclose(local.Transformed(GetWorldMatrix()));
+        }
+    }
+
+    if (includeChildren)
+    {
+        for (const GameObject* child : children)
+        {
+            if (child->IsActive())
+            {
+                result.Enclose(child->GetWorldAABB(true));
+            }
+        }
+    }
+    return result;
 }

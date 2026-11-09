@@ -1,8 +1,10 @@
 #pragma once
 
 #include "../../../Utils/UUID.h"
+#include "../../Geometry/AABB.h"
 #include "./Components/Component.h"
 #include <glm/glm.hpp>
+#include <cstdint>
 #include <vector>
 #include <string>
 #include <memory>
@@ -35,6 +37,13 @@ public:
 	// Añadir componente (transferencia directa)
 	void AddComponent(std::unique_ptr<Component> component);
 
+	// Quita un componente (el Transform no se puede quitar)
+	void RemoveComponent(ComponentType type);
+
+	// Acceso por tipo en tiempo de ejecucion (para el Inspector y la serializacion)
+	Component* GetComponentByType(ComponentType type) { return (type < COMPONENT_COUNT) ? components[type].get() : nullptr; }
+	const Component* GetComponentByType(ComponentType type) const { return (type < COMPONENT_COUNT) ? components[type].get() : nullptr; }
+
 	// Acceso rápido en O(1) directo sin dynamic_cast
 	template <typename T>
 	T* GetComponent()
@@ -51,7 +60,9 @@ public:
 		return static_cast<const T*>(components[typeId].get());
 	}
 
-	bool SetParent(GameObject* newParent);
+	// keepWorldTransform = true: el objeto se queda donde estaba en el mundo (reemparentar en la
+	// jerarquia). false: se conserva su transform LOCAL (crear hijos, instanciar modelos, cargar escenas).
+	bool SetParent(GameObject* newParent, bool keepWorldTransform = true);
 	bool AddChild(GameObject* child);
 	void RemoveChild(GameObject* child);
 
@@ -64,16 +75,33 @@ public:
 	const std::string& GetName() const { return name; }
 
 	bool IsActive() const { return active; }
-	void Enable() { this->active = true; }
-	void Disable() { this->active = false; }
+	void Enable();
+	void Disable();
+
+	// Activo y con todos sus padres activos (si un padre esta desactivado no se dibuja)
+	bool IsActiveInHierarchy() const;
 
 	glm::mat4 GetWorldMatrix() const;
 	void InvalidateWorldTransform();
+
+	// AABB en espacio mundo de su malla (invalida si no tiene). Con includeChildren = true
+	// incluye las mallas de todos sus descendientes (util para encuadrar un modelo entero).
+	AABB GetWorldAABB(bool includeChildren = false) const;
+
+	// ---------------------------------------------------------------------------------
+	// "Version espacial": contador global que sube cada vez que algo que afecta al octree
+	// cambia (un objeto con malla se mueve, se crea, se borra, se activa o cambia de malla).
+	// La escena compara este numero con el del octree para saber si debe reconstruirlo.
+	// ---------------------------------------------------------------------------------
+	static void MarkSpatialDirty() { ++spatialVersion; }
+	static uint64_t GetSpatialVersion() { return spatialVersion; }
 
 private:
 	// Helper en tiempo de compilación para mapear Tipos C++ a índices del Array
 	template<typename T>
 	static constexpr ComponentType GetComponentTypeID();
+
+	static uint64_t spatialVersion;
 
 	GameUUID uuid;
 

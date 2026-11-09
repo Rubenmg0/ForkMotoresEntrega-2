@@ -1,0 +1,1681 @@
+{
+	"gameObjects": [
+		{
+			"active": true,
+			"components": {
+				"Camera": {
+					"active": true,
+					"far": 100.0,
+					"fov": 60.0,
+					"frustumCulling": true,
+					"near": 0.10000000149011612
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						-36.0,
+						20.0,
+						36.0
+					],
+					"rotation": [
+						-29.054603576660156,
+						-41.158565521240234,
+						-20.084243774414063
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"mainCamera": true,
+			"name": "Main Camera",
+			"parent": 0,
+			"uid": 751084423879074026
+		},
+		{
+			"active": true,
+			"components": {
+				"Transform": {
+					"active": true,
+					"position": [
+						0.0,
+						0.0,
+						0.0
+					],
+					"rotation": [
+						0.0,
+						0.0,
+						0.0
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "StreetEnvironment",
+			"parent": 0,
+			"uid": 2138546736257509098
+		},
+		{
+			"active": true,
+			"components": {
+				"Transform": {
+					"active": true,
+					"position": [
+						0.0,
+						0.0,
+						0.0
+					],
+					"rotation": [
+						-90.0,
+						0.0,
+						-0.0
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "Dummy001",
+			"parent": 2138546736257509098,
+			"uid": 3568134356051618309
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						1.0,
+						1.0,
+						1.0,
+						1.0
+					],
+					"texture": 215752690896448132,
+					"useTexture": true
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 4049961517274801418
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						-41.47589111328125,
+						21.01409912109375,
+						0.0
+					],
+					"rotation": [
+						0.0,
+						0.0,
+						0.0
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "City_building_004",
+			"parent": 3568134356051618309,
+			"uid": 12575153721188624007
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						1.0,
+						1.0,
+						1.0,
+						1.0
+					],
+					"texture": 2898710017124578080,
+					"useTexture": true
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 5168756373992595806
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						17.707164764404297,
+						20.05327606201172,
+						2.121072952832037e-07
+					],
+					"rotation": [
+						0.0,
+						0.0,
+						0.0
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "City_building_001",
+			"parent": 3568134356051618309,
+			"uid": 7995346750995702374
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						1.0,
+						1.0,
+						1.0,
+						1.0
+					],
+					"texture": 4186259205097281097,
+					"useTexture": true
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 3547888439680047467
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						16.0104923248291,
+						37.4932861328125,
+						-1.5106878663573298e-06
+					],
+					"rotation": [
+						0.0,
+						0.0,
+						0.0
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "City_building_007",
+			"parent": 3568134356051618309,
+			"uid": 10832882549555834312
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						1.0,
+						1.0,
+						1.0,
+						1.0
+					],
+					"texture": 11210611084463451728,
+					"useTexture": true
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 14718194095371092573
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						40.97999572753906,
+						18.270824432373047,
+						-2.0522466002148576e-06
+					],
+					"rotation": [
+						-0.0,
+						0.0,
+						90.0
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "City_building_008",
+			"parent": 3568134356051618309,
+			"uid": 5365683154535481872
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						0.2705882489681244,
+						0.2705882489681244,
+						0.2705882489681244,
+						1.0
+					],
+					"texture": 0,
+					"useTexture": false
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 11529334037716050693
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						-2.1597719192504883,
+						1.8538382053375244,
+						0.0
+					],
+					"rotation": [
+						-0.0,
+						0.0,
+						-90.0
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "Line002",
+			"parent": 3568134356051618309,
+			"uid": 9655416981575538997
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						0.30980393290519714,
+						0.4549019932746887,
+						0.05882353335618973,
+						1.0
+					],
+					"texture": 0,
+					"useTexture": false
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 9700095538862824147
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						-0.02860260009765625,
+						0.026032090187072754,
+						0.0
+					],
+					"rotation": [
+						0.0,
+						0.0,
+						0.0
+					],
+					"scale": [
+						0.9966352581977844,
+						0.9706164598464966,
+						0.9966352581977844
+					]
+				}
+			},
+			"name": "Plane001",
+			"parent": 3568134356051618309,
+			"uid": 13537346071815200503
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						1.0,
+						1.0,
+						1.0,
+						1.0
+					],
+					"texture": 9813578622765847478,
+					"useTexture": true
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 11231834854781160365
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						25.154010772705078,
+						-39.15372085571289,
+						8.553864176974457e-07
+					],
+					"rotation": [
+						-0.0,
+						0.0,
+						90.0
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "City_building_010",
+			"parent": 3568134356051618309,
+			"uid": 2997716850747065002
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						1.0,
+						1.0,
+						1.0,
+						1.0
+					],
+					"texture": 4186259205097281097,
+					"useTexture": true
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 13654856210345233536
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						30.134540557861328,
+						37.4932861328125,
+						-1.5106878663573298e-06
+					],
+					"rotation": [
+						0.0,
+						0.0,
+						0.0
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "City_building_011",
+			"parent": 3568134356051618309,
+			"uid": 16023942696082305704
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						1.0,
+						1.0,
+						1.0,
+						1.0
+					],
+					"texture": 15798100527844980434,
+					"useTexture": true
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 2231753501335944756
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						-42.288055419921875,
+						33.201576232910156,
+						5.014607040720875e-07
+					],
+					"rotation": [
+						-0.0,
+						0.0,
+						90.0
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "City_building_013",
+			"parent": 3568134356051618309,
+			"uid": 17641953268182608113
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						1.0,
+						1.0,
+						1.0,
+						1.0
+					],
+					"texture": 215752690896448132,
+					"useTexture": true
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 13391433002416791687
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						-19.439706802368164,
+						32.061729431152344,
+						0.0
+					],
+					"rotation": [
+						-0.0,
+						0.0,
+						-180.0
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "City_building_014",
+			"parent": 3568134356051618309,
+			"uid": 5025992962759008583
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						1.0,
+						1.0,
+						1.0,
+						1.0
+					],
+					"texture": 9813578622765847478,
+					"useTexture": true
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 2157343983437273255
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						34.270423889160156,
+						-41.972747802734375,
+						8.553864176974457e-07
+					],
+					"rotation": [
+						-0.0,
+						0.0,
+						-180.0
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "City_building_016",
+			"parent": 3568134356051618309,
+			"uid": 9141675383545255164
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						1.0,
+						1.0,
+						1.0,
+						1.0
+					],
+					"texture": 9813578622765847478,
+					"useTexture": true
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 14249253461772523407
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						44.26008224487305,
+						-39.15372085571289,
+						8.553864176974457e-07
+					],
+					"rotation": [
+						-0.0,
+						0.0,
+						90.0
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "City_building_017",
+			"parent": 3568134356051618309,
+			"uid": 3865903692461041544
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						1.0,
+						1.0,
+						1.0,
+						1.0
+					],
+					"texture": 14920550261594659410,
+					"useTexture": true
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 2562158480880787260
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						-20.831323623657227,
+						-27.426488876342773,
+						0.0
+					],
+					"rotation": [
+						-0.0,
+						0.0,
+						179.99998474121094
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "City_building_022",
+			"parent": 3568134356051618309,
+			"uid": 14675416089465353659
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						1.0,
+						1.0,
+						1.0,
+						1.0
+					],
+					"texture": 4186259205097281097,
+					"useTexture": true
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 16258478349735813300
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						42.13064193725586,
+						37.4932861328125,
+						-1.5106878663573298e-06
+					],
+					"rotation": [
+						0.0,
+						0.0,
+						0.0
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "City_building_023",
+			"parent": 3568134356051618309,
+			"uid": 3534136841117428359
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						1.0,
+						1.0,
+						1.0,
+						1.0
+					],
+					"texture": 11210611084463451728,
+					"useTexture": true
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 4109979334348628407
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						-20.572771072387695,
+						43.060829162597656,
+						-0.06919445842504501
+					],
+					"rotation": [
+						-0.0,
+						0.0,
+						180.0
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "City_building_024",
+			"parent": 3568134356051618309,
+			"uid": 9974208994944175895
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						1.0,
+						1.0,
+						1.0,
+						1.0
+					],
+					"texture": 14920550261594659410,
+					"useTexture": true
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 17998154181550887760
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						31.51188850402832,
+						-16.446016311645508,
+						0.0
+					],
+					"rotation": [
+						-0.0,
+						0.0,
+						180.0
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "City_building_026",
+			"parent": 3568134356051618309,
+			"uid": 4120594544351645031
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						1.0,
+						1.0,
+						1.0,
+						1.0
+					],
+					"texture": 18099168839715026841,
+					"useTexture": true
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 10623391969771788839
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						13.38798999786377,
+						-33.75503921508789,
+						-9.383451811117993e-07
+					],
+					"rotation": [
+						0.0,
+						0.0,
+						0.0
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "City_building_028",
+			"parent": 3568134356051618309,
+			"uid": 2631843550436431556
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						0.5882353186607361,
+						0.5882353186607361,
+						0.5882353186607361,
+						1.0
+					],
+					"texture": 0,
+					"useTexture": false
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 10025846663328182688
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						-2.5033531188964844,
+						15.800846099853516,
+						0.0
+					],
+					"rotation": [
+						0.0,
+						0.0,
+						0.0
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "Object010",
+			"parent": 3568134356051618309,
+			"uid": 9814422784231295880
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						1.0,
+						1.0,
+						1.0,
+						1.0
+					],
+					"texture": 18099168839715026841,
+					"useTexture": true
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 2257688989281916722
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						-42.8072395324707,
+						-41.83556365966797,
+						-9.383451811117993e-07
+					],
+					"rotation": [
+						-0.0,
+						0.0,
+						-90.0
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "City_building_030",
+			"parent": 3568134356051618309,
+			"uid": 16378662583993438514
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						1.0,
+						1.0,
+						1.0,
+						1.0
+					],
+					"texture": 18099168839715026841,
+					"useTexture": true
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 7819339173753140633
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						-34.679481506347656,
+						-41.83556365966797,
+						-9.383451811117993e-07
+					],
+					"rotation": [
+						-0.0,
+						0.0,
+						-90.0
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "City_building_031",
+			"parent": 3568134356051618309,
+			"uid": 4469931284079146968
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						1.0,
+						1.0,
+						1.0,
+						1.0
+					],
+					"texture": 215752690896448132,
+					"useTexture": true
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 4512832673307498614
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						-29.478403091430664,
+						21.01409912109375,
+						0.0
+					],
+					"rotation": [
+						0.0,
+						0.0,
+						0.0
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "City_building_032",
+			"parent": 3568134356051618309,
+			"uid": 8407315064016394953
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						1.0,
+						1.0,
+						1.0,
+						1.0
+					],
+					"texture": 15798100527844980434,
+					"useTexture": true
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 1574251620195740379
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						-32.36149597167969,
+						42.37042236328125,
+						5.014607040720875e-07
+					],
+					"rotation": [
+						0.0,
+						0.0,
+						0.0
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "City_building_033",
+			"parent": 3568134356051618309,
+			"uid": 17027717013799292544
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						1.0,
+						1.0,
+						1.0,
+						1.0
+					],
+					"texture": 14920550261594659410,
+					"useTexture": true
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 8573157471735043708
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						16.049516677856445,
+						-16.696884155273438,
+						0.0
+					],
+					"rotation": [
+						-0.0,
+						0.0,
+						-90.00001525878906
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "City_building_034",
+			"parent": 3568134356051618309,
+			"uid": 8329000800341425391
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						1.0,
+						1.0,
+						1.0,
+						1.0
+					],
+					"texture": 18099168839715026841,
+					"useTexture": true
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 12539178746944021067
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						13.38798999786377,
+						-40.80251693725586,
+						-9.383451811117993e-07
+					],
+					"rotation": [
+						0.0,
+						0.0,
+						0.0
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "City_building_035",
+			"parent": 3568134356051618309,
+			"uid": 15049103998465598231
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						1.0,
+						1.0,
+						1.0,
+						1.0
+					],
+					"texture": 15798100527844980434,
+					"useTexture": true
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 9642906584460720196
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						-31.216331481933594,
+						33.201576232910156,
+						5.014607040720875e-07
+					],
+					"rotation": [
+						-0.0,
+						0.0,
+						-90.0
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "City_building_036",
+			"parent": 3568134356051618309,
+			"uid": 8504680828835351614
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						1.0,
+						1.0,
+						1.0,
+						1.0
+					],
+					"texture": 14920550261594659410,
+					"useTexture": true
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 611452484107162334
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						-20.31769371032715,
+						-16.16360855102539,
+						0.0
+					],
+					"rotation": [
+						-0.0,
+						0.0,
+						179.99998474121094
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "City_building_037",
+			"parent": 3568134356051618309,
+			"uid": 1557575932512349432
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						1.0,
+						1.0,
+						1.0,
+						1.0
+					],
+					"texture": 14920550261594659410,
+					"useTexture": true
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 15992981177479122461
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						-41.64900207519531,
+						-16.495393753051758,
+						0.0
+					],
+					"rotation": [
+						-0.0,
+						0.0,
+						-90.00001525878906
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "City_building_038",
+			"parent": 3568134356051618309,
+			"uid": 9791099938723435827
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						1.0,
+						1.0,
+						1.0,
+						1.0
+					],
+					"texture": 18099168839715026841,
+					"useTexture": true
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 16025987135715819204
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						-42.8072395324707,
+						-30.643888473510742,
+						-9.383451811117993e-07
+					],
+					"rotation": [
+						-0.0,
+						0.0,
+						-90.0
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "City_building_039",
+			"parent": 3568134356051618309,
+			"uid": 4170959369188854554
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						1.0,
+						1.0,
+						1.0,
+						1.0
+					],
+					"texture": 18099168839715026841,
+					"useTexture": true
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 12336021036585104566
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						-34.679481506347656,
+						-30.643888473510742,
+						-9.383451811117993e-07
+					],
+					"rotation": [
+						-0.0,
+						0.0,
+						-90.0
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "City_building_040",
+			"parent": 3568134356051618309,
+			"uid": 11952183122001979072
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						1.0,
+						1.0,
+						1.0,
+						1.0
+					],
+					"texture": 2898710017124578080,
+					"useTexture": true
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 11783185056203772837
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						30.69527816772461,
+						21.612646102905273,
+						2.121072952832037e-07
+					],
+					"rotation": [
+						-0.0,
+						0.0,
+						90.0
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "City_building_041",
+			"parent": 3568134356051618309,
+			"uid": 8871539281747398702
+		},
+		{
+			"active": true,
+			"components": {
+				"Transform": {
+					"active": true,
+					"position": [
+						0.4972038269042969,
+						0.06877517700195313,
+						-0.7816238403320313
+					],
+					"rotation": [
+						90.0,
+						0.0,
+						-0.0
+					],
+					"scale": [
+						0.009999998845160007,
+						0.009999999776482582,
+						0.009999999776482582
+					]
+				}
+			},
+			"name": "BakerHouse",
+			"parent": 0,
+			"uid": 3435138370119059501
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						1.0,
+						1.0,
+						1.0,
+						1.0
+					],
+					"texture": 7759527739438426639,
+					"useTexture": true
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 3681261937178147858
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						0.0,
+						0.0,
+						0.0
+					],
+					"rotation": [
+						-90.00000762939453,
+						0.0,
+						-0.0
+					],
+					"scale": [
+						100.0,
+						100.0,
+						100.0
+					]
+				}
+			},
+			"name": "Chimney",
+			"parent": 3435138370119059501,
+			"uid": 8834188177621128055
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						1.0,
+						1.0,
+						1.0,
+						1.0
+					],
+					"texture": 7759527739438426639,
+					"useTexture": true
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 3678769827057483602
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						0.0,
+						0.0,
+						0.0
+					],
+					"rotation": [
+						-90.00000762939453,
+						0.0,
+						-0.0
+					],
+					"scale": [
+						100.0,
+						100.0,
+						100.0
+					]
+				}
+			},
+			"name": "Baker_house",
+			"parent": 3435138370119059501,
+			"uid": 3249124851450276932
+		},
+		{
+			"active": true,
+			"components": {
+				"Transform": {
+					"active": true,
+					"position": [
+						-11.602821350097656,
+						0.06877899169921875,
+						-3.0849227905273438
+					],
+					"rotation": [
+						0.0,
+						0.0,
+						0.0
+					],
+					"scale": [
+						0.009999999776482582,
+						0.009999999776482582,
+						0.009999999776482582
+					]
+				}
+			},
+			"name": "HeavyTF2_2018",
+			"parent": 0,
+			"uid": 12142555938733877120
+		},
+		{
+			"active": true,
+			"components": {
+				"Transform": {
+					"active": true,
+					"position": [
+						0.0,
+						0.0,
+						0.0
+					],
+					"rotation": [
+						0.0,
+						0.0,
+						0.0
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "HEAVY_TF2",
+			"parent": 12142555938733877120,
+			"uid": 17852845422028049388
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						1.0,
+						1.0,
+						1.0,
+						1.0
+					],
+					"texture": 6478751899003351291,
+					"useTexture": true
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 16888342875949249584
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						0.0,
+						0.0,
+						0.0
+					],
+					"rotation": [
+						0.0,
+						0.0,
+						0.0
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "HEAVY_TF2",
+			"parent": 17852845422028049388,
+			"uid": 1089475343668880117
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						1.0,
+						1.0,
+						1.0,
+						1.0
+					],
+					"texture": 99980140597375669,
+					"useTexture": true
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 17482322822235490334
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						0.0,
+						0.0,
+						0.0
+					],
+					"rotation": [
+						0.0,
+						0.0,
+						0.0
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "HEAVY_TF2 (1)",
+			"parent": 17852845422028049388,
+			"uid": 2835761550275325153
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						1.0,
+						1.0,
+						1.0,
+						1.0
+					],
+					"texture": 7258195800746283100,
+					"useTexture": true
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 577061038366102088
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						0.0,
+						0.0,
+						0.0
+					],
+					"rotation": [
+						0.0,
+						0.0,
+						0.0
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "HEAVY_TF2 (2)",
+			"parent": 17852845422028049388,
+			"uid": 13590873664363703971
+		},
+		{
+			"active": true,
+			"components": {
+				"Material": {
+					"active": true,
+					"checkerboard": false,
+					"color": [
+						1.0,
+						1.0,
+						1.0,
+						1.0
+					],
+					"texture": 9818700739866360713,
+					"useTexture": true
+				},
+				"Mesh": {
+					"active": true,
+					"mesh": 13046183605042332043
+				},
+				"Transform": {
+					"active": true,
+					"position": [
+						0.0,
+						0.0,
+						0.0
+					],
+					"rotation": [
+						0.0,
+						0.0,
+						0.0
+					],
+					"scale": [
+						1.0,
+						1.0,
+						1.0
+					]
+				}
+			},
+			"name": "HEAVY_TF2 (3)",
+			"parent": 17852845422028049388,
+			"uid": 9732038499655241495
+		}
+	],
+	"version": 1
+}

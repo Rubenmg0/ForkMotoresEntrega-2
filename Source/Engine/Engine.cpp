@@ -6,6 +6,7 @@
 #include "Render/Render.h"
 #include "Audio/Audio.h"
 #include "Render/Texture/TextureManager.h"
+#include "ResourceManagement/ResourceManager.h"
 #include "Scene/Scene.h"
 #include "UI/ModuleUI.h"
 #include "System/SystemInfo.h"
@@ -45,6 +46,7 @@ Engine::Engine()
     render = std::make_shared<Render>();
     audio = std::make_shared<Audio>();
     textures = std::make_shared<TextureManager>();
+    resources = std::make_shared<ResourceManager>();
     scene = std::make_shared<Scene>();
     ui = std::make_shared<ModuleUI>();
 
@@ -55,6 +57,8 @@ Engine::Engine()
     AddModule(std::static_pointer_cast<Module>(input));
     AddModule(std::static_pointer_cast<Module>(audio));
     AddModule(std::static_pointer_cast<Module>(textures));
+    // Recursos: despues de las texturas (necesita DevIL) y antes de la escena (que los usa)
+    AddModule(std::static_pointer_cast<Module>(resources));
     AddModule(std::static_pointer_cast<Module>(scene));
 
     // UI module

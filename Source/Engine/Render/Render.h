@@ -2,12 +2,30 @@
 
 #include "../Module.h"
 #include "RenderSettings.h"
+#include "../Scene/Octree.h"
 
 #include "SDL3/SDL.h"
 #include <glm/glm.hpp>
+#include <array>
 #include <vector>
 
 class GameObject;
+
+// Estadisticas de culling del ultimo frame (se muestran en el editor)
+struct RenderStats
+{
+	// Vista Scene
+	bool sceneCulling = false;
+	int sceneCandidates = 0;     // objetos con malla en la escena
+	int sceneDrawn = 0;          // objetos que han pasado el frustum culling
+	OctreeQueryStats sceneQuery;
+
+	// Vista Game (Main Camera)
+	bool gameCulling = false;
+	int gameCandidates = 0;
+	int gameDrawn = 0;
+	OctreeQueryStats gameQuery;
+};
 
 class Render : public Module
 {
@@ -69,20 +87,22 @@ public:
 	void SetGameViewportVisible(bool visible) { gameViewportVisible = visible; }
 	bool IsGameViewportVisible() const { return gameViewportVisible; }
 
+	// Aspect ratio de la vista Game (lo usa tambien el frustum de la Main Camera en la vista Scene)
+	float GetGameAspectRatio() const;
+
 	//Z Buffer
 	unsigned int GetDepthTexture() const { return linearDepthTexture; }
+
+	const RenderStats& GetStats() const { return stats; }
 
 private:
 	RenderSettings settings;
 	SDL_Color background;
 	bool viewportVisible = true;
+	RenderStats stats;
 
 	// Evita reallocations constantes reservando espacio previo
 	static constexpr size_t INITIAL_DEBUG_BUFFER_CAPACITY = 10000;
-
-	// Guardar último tamaño procesado para evitar recreate continuo
-	int lastRequestedWidth = 0;
-	int lastRequestedHeight = 0;
 
 	// Framebuffer de la escena
 	unsigned int framebuffer = 0;
@@ -114,6 +134,7 @@ private:
 	unsigned int shaderProgram = 0;
 	unsigned int lineShaderProgram = 0;
 	unsigned int singleColorShaderProgram = 0; // Shader para el outline
+	unsigned int debugLineProgram = 0;         // Lineas con color por vertice (gizmos)
 
 	//ZBuffer
 	unsigned int depthTextureBuffer = 0; // Texture handle for the Z-Buffer
@@ -139,6 +160,8 @@ private:
 		int scaleFactor = -1;
 	} scu;
 
+	int debugLineViewProjection = -1;
+
 	// Rejilla de referencia (Grid) y Ejes centrales (Axis) en buffers estáticos persistentes
 	unsigned int gridVAO = 0;
 	unsigned int gridVBO = 0;
@@ -159,12 +182,30 @@ private:
 	std::vector<float> debugVertexLines; // reutilizado entre frames (sin realloc)
 	std::vector<float> debugFaceLines;
 
+	// Gizmos (AABB, frustum, octree, rayo): lineas con color, un unico buffer y una unica llamada de dibujo
+	struct DebugLineVertex
+	{
+		glm::vec3 position;
+		glm::vec3 color;
+	};
+	std::vector<DebugLineVertex> gizmoLines;
+	unsigned int gizmoVAO = 0;
+	unsigned int gizmoVBO = 0;
+	size_t gizmoVBOCapacityBytes = 0;
+	void AddGizmoLine(const glm::vec3& a, const glm::vec3& b, const glm::vec3& color);
+	void AddGizmoBox(const std::array<glm::vec3, 8>& corners, const glm::vec3& color);
+	void DrawSceneGizmos(const glm::mat4& view, const glm::mat4& projection);
+	void FlushGizmoLines(const glm::mat4& viewProjection);
+
 	void RenderScene();
 	void RenderGame();
 	void BindDefaultFramebuffer();
 
-	void DrawSingleGameObject(GameObject* go, const glm::mat4& parentMatrix);
+	// Dibuja una lista de objetos: primero los opacos y despues los transparentes (de lejos a cerca)
+	void DrawObjects(const std::vector<GameObject*>& objects, const glm::vec3& cameraPosition);
+	void DrawSingleGameObject(GameObject* go, const glm::mat4& worldMatrix);
 	void DrawDebug(const glm::mat4& view, const glm::mat4& projection);
 	void CollectNormals(GameObject* go, const glm::mat4& parentMatrix);
 	void AppendNormals(GameObject* go, const glm::mat4& worldMatrix);
-	void DrawSelectionOutline(GameObject* selected, const glm::mat4& view, const glm::mat4& projection);};
+	void DrawSelectionOutline(GameObject* selected, const glm::mat4& view, const glm::mat4& projection);
+};

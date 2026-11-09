@@ -31,4 +31,15 @@ struct RenderSettings
 	// Rejilla de referencia en el plano XZ y eje de coordenadas en el origen
 	bool showGrid = true;
 	bool showAxis = true;
+
+	// ---------------- Gizmos de depuracion de la vista Scene ----------------
+	bool showAABBs = false;            // AABB de todas las mallas: verde = la ve la Main Camera, rojo = descartada
+	bool showSelectedAABB = true;      // AABB del objeto seleccionado (amarillo)
+	bool showOctree = false;           // nodos del octree
+	bool showCameraFrustum = true;     // frustum de la Main Camera
+	bool showPickRay = true;           // ultimo rayo lanzado al hacer clic en la vista Scene
+
+	// ---------------- Frustum culling ----------------
+	bool editorFrustumCulling = true;  // la vista Scene no dibuja lo que esta fuera de la camara del editor
+	bool cullingPreview = false;       // la vista Scene solo dibuja lo que ve la Main Camera (para ver el culling)
 };

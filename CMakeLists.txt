@@ -24,6 +24,7 @@ find_package(imgui CONFIG REQUIRED)
 find_package(DevIL REQUIRED)
 find_package(assimp CONFIG REQUIRED)
 find_package(Tracy CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS
     "Source/*.cpp"
@@ -44,6 +45,7 @@ DevIL::ILU
 DevIL::ILUT
 assimp::assimp
 Tracy::TracyClient
+nlohmann_json::nlohmann_json
 )
 
 # Copy required DLLs (TracyClient.dll, SDL3.dll, assimp.dll, etc.) to executable directory

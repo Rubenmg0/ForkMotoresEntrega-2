@@ -1,0 +1,164 @@
+{
+	"importSettings": {
+		"convertUnits": true,
+		"globalScale": 1.0,
+		"ignoreCameras": true,
+		"ignoreLights": true,
+		"upAxis": 0
+	},
+	"meshes": [
+		{
+			"index": 0,
+			"name": "City_building_004",
+			"uid": 4049961517274801418
+		},
+		{
+			"index": 1,
+			"name": "City_building_001",
+			"uid": 5168756373992595806
+		},
+		{
+			"index": 2,
+			"name": "City_building_007",
+			"uid": 3547888439680047467
+		},
+		{
+			"index": 3,
+			"name": "City_building_008",
+			"uid": 14718194095371092573
+		},
+		{
+			"index": 4,
+			"name": "Line002",
+			"uid": 11529334037716050693
+		},
+		{
+			"index": 5,
+			"name": "Plane001",
+			"uid": 9700095538862824147
+		},
+		{
+			"index": 6,
+			"name": "City_building_010",
+			"uid": 11231834854781160365
+		},
+		{
+			"index": 7,
+			"name": "City_building_011",
+			"uid": 13654856210345233536
+		},
+		{
+			"index": 8,
+			"name": "City_building_013",
+			"uid": 2231753501335944756
+		},
+		{
+			"index": 9,
+			"name": "City_building_014",
+			"uid": 13391433002416791687
+		},
+		{
+			"index": 10,
+			"name": "City_building_016",
+			"uid": 2157343983437273255
+		},
+		{
+			"index": 11,
+			"name": "City_building_017",
+			"uid": 14249253461772523407
+		},
+		{
+			"index": 12,
+			"name": "City_building_022",
+			"uid": 2562158480880787260
+		},
+		{
+			"index": 13,
+			"name": "City_building_023",
+			"uid": 16258478349735813300
+		},
+		{
+			"index": 14,
+			"name": "City_building_024",
+			"uid": 4109979334348628407
+		},
+		{
+			"index": 15,
+			"name": "City_building_026",
+			"uid": 17998154181550887760
+		},
+		{
+			"index": 16,
+			"name": "City_building_028",
+			"uid": 10623391969771788839
+		},
+		{
+			"index": 17,
+			"name": "Object010",
+			"uid": 10025846663328182688
+		},
+		{
+			"index": 18,
+			"name": "City_building_030",
+			"uid": 2257688989281916722
+		},
+		{
+			"index": 19,
+			"name": "City_building_031",
+			"uid": 7819339173753140633
+		},
+		{
+			"index": 20,
+			"name": "City_building_032",
+			"uid": 4512832673307498614
+		},
+		{
+			"index": 21,
+			"name": "City_building_033",
+			"uid": 1574251620195740379
+		},
+		{
+			"index": 22,
+			"name": "City_building_034",
+			"uid": 8573157471735043708
+		},
+		{
+			"index": 23,
+			"name": "City_building_035",
+			"uid": 12539178746944021067
+		},
+		{
+			"index": 24,
+			"name": "City_building_036",
+			"uid": 9642906584460720196
+		},
+		{
+			"index": 25,
+			"name": "City_building_037",
+			"uid": 611452484107162334
+		},
+		{
+			"index": 26,
+			"name": "City_building_038",
+			"uid": 15992981177479122461
+		},
+		{
+			"index": 27,
+			"name": "City_building_039",
+			"uid": 16025987135715819204
+		},
+		{
+			"index": 28,
+			"name": "City_building_040",
+			"uid": 12336021036585104566
+		},
+		{
+			"index": 29,
+			"name": "City_building_041",
+			"uid": 11783185056203772837
+		}
+	],
+	"metaVersion": 1,
+	"type": "Model",
+	"uid": 1740966630622287902
+}

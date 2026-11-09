@@ -21,6 +21,8 @@
 #include "../Scene/GameObjects/Components/CameraComponent.h"
 
 #include <algorithm>
+#include <cstddef>
+#include <unordered_set>
 
 #ifdef _DEBUG
 #include <tracy/Tracy.hpp>
@@ -279,6 +281,41 @@ bool Render::Start() {
 	glEnableVertexAttribArray(1);
 	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
 	glBindVertexArray(0);
+
+	/////////////////////  Gizmo Shader (AABB, frustum, octree, rayo: color por vertice) //////////////////////
+	const char* gizmoVS = "#version 460 core\n"
+		"layout (location = 0) in vec3 aPos;\n"
+		"layout (location = 1) in vec3 aColor;\n"
+		"uniform mat4 viewProjection;\n"
+		"out vec3 vColor;\n"
+		"void main()\n"
+		"{\n"
+		"   vColor = aColor;\n"
+		"   gl_Position = viewProjection * vec4(aPos, 1.0);\n"
+		"}\0";
+
+	const char* gizmoFS = "#version 460 core\n"
+		"in vec3 vColor;\n"
+		"out vec4 FragColor;\n"
+		"void main()\n"
+		"{\n"
+		"   FragColor = vec4(vColor, 1.0);\n"
+		"}\0";
+
+	debugLineProgram = BuildProgram(gizmoVS, gizmoFS, "Gizmos");
+	debugLineViewProjection = glGetUniformLocation(debugLineProgram, "viewProjection");
+
+	glGenVertexArrays(1, &gizmoVAO);
+	glGenBuffers(1, &gizmoVBO);
+	glBindVertexArray(gizmoVAO);
+	glBindBuffer(GL_ARRAY_BUFFER, gizmoVBO);
+	glEnableVertexAttribArray(0);
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(DebugLineVertex), (void*)offsetof(DebugLineVertex, position));
+	glEnableVertexAttribArray(1);
+	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(DebugLineVertex), (void*)offsetof(DebugLineVertex, color));
+	glBindVertexArray(0);
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
+	gizmoLines.reserve(INITIAL_DEBUG_BUFFER_CAPACITY);
 
 	////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -682,20 +719,18 @@ void Render::RenderScene()
 	glUseProgram(shaderProgram);
 
 	Scene* scene = Engine::GetInstance().scene.get();
-	GameObject* cameraObj = scene ? scene->GetMainCameraObject() : nullptr;
+	GameObject* cameraObj = scene ? scene->GetEditorCameraObject() : nullptr;
 	CameraComponent* camera = cameraObj ? cameraObj->GetComponent<CameraComponent>() : nullptr;
 
+	const float aspectRatio = (fboHeight > 0) ? (float)fboWidth / (float)fboHeight : 1.0f;
 	glm::mat4 view = glm::mat4(1.0f);
 	glm::mat4 projection = glm::mat4(1.0f);
 	glm::vec3 cameraPos = glm::vec3(0.0f);
 
 	if (camera) {
-		float aspectRatio = (fboHeight > 0) ? (float)fboWidth / (float)fboHeight : 1.0f;
 		view = camera->GetViewMatrix();
 		projection = camera->GetProjectionMatrix(aspectRatio);
-		if (auto camTrans = cameraObj->GetComponent<TransformComponent>()) {
-			cameraPos = camTrans->GetPosition();
-		}
+		cameraPos = camera->GetWorldPosition();
 	}
 
 	glUniformMatrix4fv(u.view, 1, GL_FALSE, glm::value_ptr(view));
@@ -704,87 +739,42 @@ void Render::RenderScene()
 	glUniform1i(u.texture, 0);
 
 	// -------------------------------------------------------------------------
-	// Recolección y Clasificación (Opacos vs Transparentes)
+	// Frustum culling (con el octree): solo se dibuja lo que puede verse.
+	//  - Normal: se usa el frustum de la camara del editor.
+	//  - "Culling preview": se usa el frustum de la Main Camera, asi en la vista Scene se ve
+	//    exactamente que objetos descarta la camara de juego.
 	// -------------------------------------------------------------------------
-	struct RenderItem {
-		GameObject* go;
-		glm::mat4 modelMatrix;
-		float distanceToCamera;
-	};
+	std::vector<GameObject*> visibleObjects;
+	stats.sceneQuery = OctreeQueryStats();
+	stats.sceneCulling = false;
+	stats.sceneCandidates = 0;
 
-	std::vector<RenderItem> opaqueItems;
-	std::vector<RenderItem> transparentItems;
-
-	std::function<void(GameObject*, const glm::mat4&)> collectItems = [&](GameObject* go, const glm::mat4& parentMatrix) 
+	if (scene)
 	{
-		if (!go || !go->IsActive()) return;
+		stats.sceneCandidates = static_cast<int>(scene->GetOctree().GetObjectCount());
 
-		glm::mat4 globalMatrix = parentMatrix;
-		if (auto t = go->GetComponent<TransformComponent>()) 
+		GameObject* gameCameraObj = scene->GetGameCameraObject();
+		const CameraComponent* gameCamera = (gameCameraObj && gameCameraObj->IsActiveInHierarchy()) ?
+			gameCameraObj->GetComponent<CameraComponent>() : nullptr;
+
+		if (settings.cullingPreview && gameCamera && gameCamera->frustumCulling)
 		{
-			globalMatrix = parentMatrix * t->GetLocalModelMatrix();
+			scene->CollectVisible(gameCamera->GetFrustum(GetGameAspectRatio()), visibleObjects, &stats.sceneQuery);
+			stats.sceneCulling = true;
 		}
-
-		if (go->GetComponent<MeshComponent>()) 
+		else if (settings.editorFrustumCulling && camera)
 		{
-			MaterialComponent* mat = go->GetComponent<MaterialComponent>();
-
-			// Usamos el nuevo método que revisa tanto el color como la textura cargada
-			bool isTransparent = mat ? mat->HasTransparentAlpha() : false;
-
-			glm::vec3 objPos = glm::vec3(globalMatrix[3]);
-			float dist = glm::length(cameraPos - objPos);
-
-			if (isTransparent) {
-				transparentItems.push_back({ go, globalMatrix, dist });
-			}
-			else {
-				opaqueItems.push_back({ go, globalMatrix, dist });
-			}
+			scene->CollectVisible(camera->GetFrustum(aspectRatio), visibleObjects, &stats.sceneQuery);
+			stats.sceneCulling = true;
 		}
-
-		for (GameObject* child : go->GetChildren()) 
+		else
 		{
-			collectItems(child, globalMatrix);
+			scene->CollectRenderables(visibleObjects);
 		}
-	};
-
-	if (scene->GetRoot()) {
-		collectItems(scene->GetRoot(), glm::mat4(1.0f));
 	}
+	stats.sceneDrawn = static_cast<int>(visibleObjects.size());
 
-	// Ordenar transparentes de más lejano a más cercano (Back-to-Front)
-	std::sort(transparentItems.begin(), transparentItems.end(), [](const RenderItem& a, const RenderItem& b) {
-		return a.distanceToCamera > b.distanceToCamera;
-		});
-
-	// -------------------------------------------------------------------------
-	// Objetos Opacos (Escriben en Depth Buffer)
-	// -------------------------------------------------------------------------
-	glDepthMask(GL_TRUE);
-	for (const auto& item : opaqueItems) 
-	{
-		DrawSingleGameObject(item.go, item.modelMatrix);
-	}
-
-	// -------------------------------------------------------------------------
-	// Objetos Transparentes
-	// -------------------------------------------------------------------------
-	// Mantenemos glDepthMask(GL_TRUE) si queremos que escriban su profundidad
-	// para que queden registrados en el Z-Buffer Visualizer y el Stencil del Outline
-	
-	// Blending para transparencias
-	glEnable(GL_BLEND);
-	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-	glDepthMask(GL_FALSE);
-	for (const auto& item : transparentItems) {
-		DrawSingleGameObject(item.go, item.modelMatrix);
-	}
-	glDepthMask(GL_TRUE); // Restaurar la máscara por defecto
-
-	// Blending para transparencias
-	glDisable(GL_BLEND);
+	DrawObjects(visibleObjects, cameraPos);
 
 	// -------------------------------------------------------------------------
 	// PASE DE LINEARIZACIÓN DEL Z-BUFFER (Para ImGui)
@@ -829,13 +819,213 @@ void Render::RenderScene()
 	}
 
 	// -------------------------------------------------------------------------
-	// Grid, Axis y Debug
+	// Grid, Axis, Debug (normales y contorno) y Gizmos (AABB, frustum, octree, rayo)
 	// -------------------------------------------------------------------------
 
 	DrawGridAndAxis(view, projection);
 	DrawDebug(view, projection);
+	DrawSceneGizmos(view, projection);
 
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+float Render::GetGameAspectRatio() const
+{
+	if (gameViewportWidth <= 0 || gameViewportHeight <= 0) return 16.0f / 9.0f;
+	return static_cast<float>(gameViewportWidth) / static_cast<float>(gameViewportHeight);
+}
+
+void Render::DrawObjects(const std::vector<GameObject*>& objects, const glm::vec3& cameraPosition)
+{
+#ifdef _DEBUG
+	ZoneScoped;
+#endif
+
+	// -------------------------------------------------------------------------
+	// Clasificación (Opacos vs Transparentes)
+	// -------------------------------------------------------------------------
+	struct RenderItem {
+		GameObject* go;
+		glm::mat4 modelMatrix;
+		float distanceToCamera;
+	};
+
+	std::vector<RenderItem> opaqueItems;
+	std::vector<RenderItem> transparentItems;
+	opaqueItems.reserve(objects.size());
+
+	for (GameObject* go : objects)
+	{
+		const glm::mat4 worldMatrix = go->GetWorldMatrix();
+		const MaterialComponent* mat = go->GetComponent<MaterialComponent>();
+		const bool isTransparent = mat && mat->IsActive() && mat->HasTransparentAlpha();
+		const float dist = glm::length(cameraPosition - glm::vec3(worldMatrix[3]));
+
+		if (isTransparent) transparentItems.push_back({ go, worldMatrix, dist });
+		else opaqueItems.push_back({ go, worldMatrix, dist });
+	}
+
+	// Ordenar transparentes de más lejano a más cercano (Back-to-Front)
+	std::sort(transparentItems.begin(), transparentItems.end(), [](const RenderItem& a, const RenderItem& b) {
+		return a.distanceToCamera > b.distanceToCamera;
+		});
+
+	// -------------------------------------------------------------------------
+	// Objetos Opacos (Escriben en Depth Buffer)
+	// -------------------------------------------------------------------------
+	glDepthMask(GL_TRUE);
+	for (const auto& item : opaqueItems)
+	{
+		DrawSingleGameObject(item.go, item.modelMatrix);
+	}
+
+	// -------------------------------------------------------------------------
+	// Objetos Transparentes (blending, sin escribir profundidad)
+	// -------------------------------------------------------------------------
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+	glDepthMask(GL_FALSE);
+	for (const auto& item : transparentItems)
+	{
+		DrawSingleGameObject(item.go, item.modelMatrix);
+	}
+	glDepthMask(GL_TRUE); // Restaurar la máscara por defecto
+
+	glDisable(GL_BLEND);
+}
+
+void Render::AddGizmoLine(const glm::vec3& a, const glm::vec3& b, const glm::vec3& color)
+{
+	gizmoLines.push_back({ a, color });
+	gizmoLines.push_back({ b, color });
+}
+
+void Render::AddGizmoBox(const std::array<glm::vec3, 8>& corners, const glm::vec3& color)
+{
+	// Las esquinas estan ordenadas por bits (bit0 = X, bit1 = Y, bit2 = Z): cada arista une dos
+	// esquinas que solo se diferencian en un bit
+	static const int edges[12][2] = {
+		{ 0, 1 }, { 2, 3 }, { 4, 5 }, { 6, 7 },   // aristas en X
+		{ 0, 2 }, { 1, 3 }, { 4, 6 }, { 5, 7 },   // aristas en Y
+		{ 0, 4 }, { 1, 5 }, { 2, 6 }, { 3, 7 }    // aristas en Z
+	};
+	for (const auto& edge : edges)
+	{
+		AddGizmoLine(corners[edge[0]], corners[edge[1]], color);
+	}
+}
+
+void Render::DrawSceneGizmos(const glm::mat4& view, const glm::mat4& projection)
+{
+#ifdef _DEBUG
+	ZoneScoped;
+#endif
+
+	Scene* scene = Engine::GetInstance().scene.get();
+	if (!scene) return;
+
+	gizmoLines.clear();
+
+	// Main Camera (camara de juego): su frustum decide el color de las AABB
+	GameObject* gameCameraObj = scene->GetGameCameraObject();
+	const CameraComponent* gameCamera = (gameCameraObj && gameCameraObj->IsActiveInHierarchy()) ?
+		gameCameraObj->GetComponent<CameraComponent>() : nullptr;
+	Frustum gameFrustum;
+	if (gameCamera) gameFrustum = gameCamera->GetFrustum(GetGameAspectRatio());
+
+	// 1) Nodos del octree (azul)
+	if (settings.showOctree)
+	{
+		std::vector<AABB> nodeBoxes;
+		scene->GetOctree().CollectNodeBoxes(nodeBoxes);
+		for (const AABB& box : nodeBoxes)
+		{
+			AddGizmoBox(box.GetCorners(), glm::vec3(0.25f, 0.55f, 0.95f));
+		}
+	}
+
+	// 2) AABB de todas las mallas: verde = dentro del frustum de la Main Camera, rojo = descartada
+	if (settings.showAABBs)
+	{
+		std::vector<GameObject*> renderables;
+		scene->CollectRenderables(renderables);
+
+		std::unordered_set<const GameObject*> visibleForGame;
+		if (gameCamera)
+		{
+			std::vector<GameObject*> visible;
+			scene->CollectVisible(gameFrustum, visible);
+			visibleForGame.insert(visible.begin(), visible.end());
+		}
+
+		for (const GameObject* object : renderables)
+		{
+			const AABB box = object->GetWorldAABB(false);
+			if (!box.IsValid()) continue;
+
+			glm::vec3 color(0.9f, 0.9f, 0.9f); // sin Main Camera: gris
+			if (gameCamera)
+			{
+				color = visibleForGame.count(object) > 0 ? glm::vec3(0.2f, 1.0f, 0.3f) : glm::vec3(1.0f, 0.25f, 0.25f);
+			}
+			AddGizmoBox(box.GetCorners(), color);
+		}
+	}
+
+	// 3) AABB del objeto seleccionado (amarillo, incluye a sus hijos)
+	if (settings.showSelectedAABB && scene->GetSelected())
+	{
+		const AABB box = scene->GetSelected()->GetWorldAABB(true);
+		if (box.IsValid()) AddGizmoBox(box.GetCorners(), glm::vec3(1.0f, 0.85f, 0.1f));
+	}
+
+	// 4) Frustum de la Main Camera (blanco)
+	if (settings.showCameraFrustum && gameCamera && gameFrustum.IsValid())
+	{
+		AddGizmoBox(gameFrustum.GetCorners(), glm::vec3(1.0f, 1.0f, 1.0f));
+	}
+
+	// 5) Ultimo rayo del mouse picking (magenta)
+	if (settings.showPickRay && scene->HasLastPickRay())
+	{
+		const Ray& ray = scene->GetLastPickRay();
+		AddGizmoLine(ray.origin, ray.GetPoint(scene->GetLastPickRayLength()), glm::vec3(1.0f, 0.2f, 1.0f));
+	}
+
+	FlushGizmoLines(projection * view);
+}
+
+void Render::FlushGizmoLines(const glm::mat4& viewProjection)
+{
+	if (gizmoLines.empty() || debugLineProgram == 0 || gizmoVAO == 0) return;
+
+	glDisable(GL_STENCIL_TEST);
+	glEnable(GL_DEPTH_TEST);
+	glDepthFunc(GL_LEQUAL);
+
+	glBindVertexArray(gizmoVAO);
+	glBindBuffer(GL_ARRAY_BUFFER, gizmoVBO);
+
+	// Solo se reserva memoria en la GPU cuando el buffer se queda pequeno
+	const size_t bytes = gizmoLines.size() * sizeof(DebugLineVertex);
+	if (bytes > gizmoVBOCapacityBytes)
+	{
+		gizmoVBOCapacityBytes = bytes * 2;
+		glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)gizmoVBOCapacityBytes, nullptr, GL_DYNAMIC_DRAW);
+	}
+	glBufferSubData(GL_ARRAY_BUFFER, 0, (GLsizeiptr)bytes, gizmoLines.data());
+
+	glUseProgram(debugLineProgram);
+	glUniformMatrix4fv(debugLineViewProjection, 1, GL_FALSE, glm::value_ptr(viewProjection));
+
+	glLineWidth(1.5f);
+	glDrawArrays(GL_LINES, 0, (GLsizei)gizmoLines.size());
+	glLineWidth(1.0f);
+
+	glBindVertexArray(0);
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
+	glDepthFunc(GL_LESS);
 }
 
 
@@ -866,9 +1056,20 @@ bool Render::CleanUp()
 	debugFaceLines.clear();
 	debugFaceLines.shrink_to_fit();
 
+	if (gizmoVBO != 0) { glDeleteBuffers(1, &gizmoVBO); gizmoVBO = 0; }
+	if (gizmoVAO != 0) { glDeleteVertexArrays(1, &gizmoVAO); gizmoVAO = 0; }
+	gizmoVBOCapacityBytes = 0;
+	gizmoLines.clear();
+	gizmoLines.shrink_to_fit();
+
+	if (depthDebugVBO != 0) { glDeleteBuffers(1, &depthDebugVBO); depthDebugVBO = 0; }
+	if (depthDebugVAO != 0) { glDeleteVertexArrays(1, &depthDebugVAO); depthDebugVAO = 0; }
+
 	if (shaderProgram != 0) { glDeleteProgram(shaderProgram); shaderProgram = 0; }
 	if (lineShaderProgram != 0) { glDeleteProgram(lineShaderProgram); lineShaderProgram = 0; }
 	if (singleColorShaderProgram != 0) { glDeleteProgram(singleColorShaderProgram); singleColorShaderProgram = 0; }
+	if (debugLineProgram != 0) { glDeleteProgram(debugLineProgram); debugLineProgram = 0; }
+	if (depthDebugProgram != 0) { glDeleteProgram(depthDebugProgram); depthDebugProgram = 0; }
 
 	LOG("[Render] Recursos OpenGL liberados (FBO, RBO, textura de color, shaders, buffers de depuración, Grid y Axis)");
 	return true;
@@ -916,7 +1117,7 @@ void Render::DrawSingleGameObject(GameObject* go, const glm::mat4& worldMatrix)
 		glUniformMatrix4fv(u.model, 1, GL_FALSE, glm::value_ptr(worldMatrix));
 
 		glActiveTexture(GL_TEXTURE0);
-		if (material) 
+		if (material && material->IsActive()) 
 		{
 			unsigned int texId = material->GetActiveTextureID();
 			glUniform4fv(u.color, 1, glm::value_ptr(material->GetColor()));
@@ -1072,7 +1273,7 @@ void Render::AppendNormals(GameObject* go, const glm::mat4& worldMatrix)
 	MeshComponent* mesh = go->GetComponent<MeshComponent>();
 	if (!mesh || !mesh->GetPrimitive()) return;
 
-	Primitive* prim = mesh->GetPrimitive();
+	const Primitive* prim = mesh->GetPrimitive();
 	const bool wantVertex = (settings.normals == NormalsMode::Vertex || settings.normals == NormalsMode::Both);
 	const bool wantFace = (settings.normals == NormalsMode::Face || settings.normals == NormalsMode::Both);
 
@@ -1178,10 +1379,15 @@ void Render::RenderGame()
 
 	Scene* scene = Engine::GetInstance().scene.get();
 	GameObject* gameCameraObj = scene ? scene->GetGameCameraObject() : nullptr;
-	CameraComponent* camera = (gameCameraObj && gameCameraObj->IsActive()) ? gameCameraObj->GetComponent<CameraComponent>() : nullptr;
+	CameraComponent* camera = (gameCameraObj && gameCameraObj->IsActiveInHierarchy()) ? gameCameraObj->GetComponent<CameraComponent>() : nullptr;
+
+	stats.gameCandidates = 0;
+	stats.gameDrawn = 0;
+	stats.gameCulling = false;
+	stats.gameQuery = OctreeQueryStats();
 
 	// Si no hay Main Camera activa en la escena, dejamos el fondo limpio y salimos
-	if (!camera)
+	if (!camera || !camera->IsActive())
 	{
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		return;
@@ -1200,77 +1406,32 @@ void Render::RenderGame()
 	float aspectRatio = (gameFboHeight > 0) ? (float)gameFboWidth / (float)gameFboHeight : 1.0f;
 	glm::mat4 view = camera->GetViewMatrix();
 	glm::mat4 projection = camera->GetProjectionMatrix(aspectRatio);
-	glm::vec3 cameraPos = glm::vec3(gameCameraObj->GetWorldMatrix()[3]);
+	glm::vec3 cameraPos = camera->GetWorldPosition();
 
 	glUniformMatrix4fv(u.view, 1, GL_FALSE, glm::value_ptr(view));
 	glUniformMatrix4fv(u.projection, 1, GL_FALSE, glm::value_ptr(projection));
 	glUniform1i(u.lighting, settings.lighting ? 1 : 0);
 	glUniform1i(u.texture, 0);
 
-	struct RenderItem {
-		GameObject* go;
-		glm::mat4 modelMatrix;
-		float distanceToCamera;
-	};
-
-	std::vector<RenderItem> opaqueItems;
-	std::vector<RenderItem> transparentItems;
-
-	std::function<void(GameObject*, const glm::mat4&)> collectItems = [&](GameObject* go, const glm::mat4& parentMatrix)
-		{
-			if (!go || !go->IsActive()) return;
-
-			glm::mat4 globalMatrix = parentMatrix;
-			if (auto t = go->GetComponent<TransformComponent>())
-			{
-				globalMatrix = parentMatrix * t->GetLocalModelMatrix();
-			}
-
-			if (go->GetComponent<MeshComponent>())
-			{
-				MaterialComponent* mat = go->GetComponent<MaterialComponent>();
-				bool isTransparent = mat ? mat->HasTransparentAlpha() : false;
-				glm::vec3 objPos = glm::vec3(globalMatrix[3]);
-				float dist = glm::length(cameraPos - objPos);
-
-				if (isTransparent) transparentItems.push_back({ go, globalMatrix, dist });
-				else opaqueItems.push_back({ go, globalMatrix, dist });
-			}
-
-			for (GameObject* child : go->GetChildren())
-			{
-				collectItems(child, globalMatrix);
-			}
-		};
-
-	if (scene->GetRoot())
+	// Frustum culling de la camara de juego (acelerado con el octree)
+	std::vector<GameObject*> visibleObjects;
+	stats.gameCandidates = static_cast<int>(scene->GetOctree().GetObjectCount());
+	if (camera->frustumCulling)
 	{
-		collectItems(scene->GetRoot(), glm::mat4(1.0f));
+		scene->CollectVisible(camera->GetFrustum(aspectRatio), visibleObjects, &stats.gameQuery);
+		stats.gameCulling = true;
 	}
-
-	std::sort(transparentItems.begin(), transparentItems.end(), [](const RenderItem& a, const RenderItem& b) {
-		return a.distanceToCamera > b.distanceToCamera;
-		});
+	else
+	{
+		scene->CollectRenderables(visibleObjects);
+	}
+	stats.gameDrawn = static_cast<int>(visibleObjects.size());
 
 	// Desactivamos temporalmente el highlight de selección para no ensuciar el stencil en la vista Game
 	bool prevHighlight = settings.highlightSelection;
 	settings.highlightSelection = false;
 
-	glDepthMask(GL_TRUE);
-	for (const auto& item : opaqueItems)
-	{
-		DrawSingleGameObject(item.go, item.modelMatrix);
-	}
-
-	glEnable(GL_BLEND);
-	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-	glDepthMask(GL_FALSE);
-	for (const auto& item : transparentItems)
-	{
-		DrawSingleGameObject(item.go, item.modelMatrix);
-	}
-	glDepthMask(GL_TRUE);
-	glDisable(GL_BLEND);
+	DrawObjects(visibleObjects, cameraPos);
 
 	settings.highlightSelection = prevHighlight;
 

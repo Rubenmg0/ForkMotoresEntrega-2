@@ -1,0 +1,34 @@
+{
+	"importSettings": {
+		"convertUnits": true,
+		"globalScale": 1.0,
+		"ignoreCameras": true,
+		"ignoreLights": true,
+		"upAxis": 0
+	},
+	"meshes": [
+		{
+			"index": 0,
+			"name": "HEAVY_TF2",
+			"uid": 16888342875949249584
+		},
+		{
+			"index": 1,
+			"name": "HEAVY_TF2 (1)",
+			"uid": 17482322822235490334
+		},
+		{
+			"index": 2,
+			"name": "HEAVY_TF2 (2)",
+			"uid": 577061038366102088
+		},
+		{
+			"index": 3,
+			"name": "HEAVY_TF2 (3)",
+			"uid": 13046183605042332043
+		}
+	],
+	"metaVersion": 1,
+	"type": "Model",
+	"uid": 3018858500764485286
+}

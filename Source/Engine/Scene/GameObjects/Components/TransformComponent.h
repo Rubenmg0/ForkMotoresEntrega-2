@@ -9,7 +9,7 @@
 class TransformComponent : public Component
 {
 public:
-	TransformComponent(GameObject* owner) : Component(COMPONENT_TRANSFORM, owner), 
+	TransformComponent(GameObject* owner) : Component(COMPONENT_TRANSFORM, owner),
 		position(0.0f), rotation(0.0f), scale(1.0f) {}
 
 	virtual ~TransformComponent() {}
@@ -24,6 +24,10 @@ public:
 	const glm::vec3& GetPosition() const { return position; }
 	const glm::vec3& GetRotation() const { return rotation; } // grados (Euler XYZ)
 	const glm::vec3& GetScale() const { return scale; }
+
+	// Orienta el objeto para que su eje -Z (el "delante" de las camaras en OpenGL) mire al punto
+	// 'target' (en coordenadas del mundo). Pensado para objetos sin padre, como la Main Camera.
+	void LookAt(const glm::vec3& target, const glm::vec3& worldUp = glm::vec3(0.0f, 1.0f, 0.0f));
 
 	// Matriz local cacheada: solo se recalcula cuando cambia posición/rotación/escala
 	const glm::mat4& GetLocalModelMatrix() const
@@ -47,8 +51,11 @@ public:
 	// Invalida la matriz local y la global (este nodo y todos sus descendientes)
 	void MarkDirty() { dirty = true; InvalidateWorld(); }
 
-	// Invalida solo la matriz global de este nodo y sus descendientes 
+	// Invalida solo la matriz global de este nodo y sus descendientes
 	void InvalidateWorld();
+
+	void Save(nlohmann::json& out) const override;
+	void Load(const nlohmann::json& in) override;
 
 private:
 	glm::vec3 position;

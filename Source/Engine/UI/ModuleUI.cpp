@@ -12,6 +12,11 @@
 #include "../Scene/GameObjects/Components/MaterialComponent.h"
 #include "../Scene/GameObjects/Components/CameraComponent.h"
 #include "../Audio/Audio.h"
+#include "../ResourceManagement/ResourceManager.h"
+#include "../ResourceManagement/ResourceMesh.h"
+#include "../ResourceManagement/ResourceTexture.h"
+#include "../ResourceManagement/Importers/ImporterManager.h"
+#include "EditorDragDrop.h"
 
 #include <glm/gtc/type_ptr.hpp>
 
@@ -29,6 +34,7 @@
 
 #include <functional>
 #include <cfloat>
+#include <cstring>
 
 #ifdef _DEBUG
 	#include <tracy/Tracy.hpp>
@@ -106,6 +112,10 @@ bool ModuleUI::Start()
 	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;         // Enable Docking
 	io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;       // Enable Multi-Viewport / Platform Windows
 
+	// Fichero de layout nuevo: asi la primera vez se crea la disposicion con las ventanas
+	// nuevas (Assets, Resources) ya acopladas, en vez de heredar el layout antiguo
+	io.IniFilename = "imgui_layout_a2.ini";
+
 	// Setup Dear ImGui style
 	ImGui::StyleColorsDark();
 
@@ -163,7 +173,15 @@ bool ModuleUI::Update(float dt)
 	ZoneScoped;
 #endif
 	(void)dt;
+
+	// Operaciones sobre assets pedidas el frame anterior (borrar, reimportar...): se hacen
+	// antes de dibujar nada para que ImGui nunca use una textura ya liberada
+	ProcessPendingAssetOperations();
+
 	bool ret = DrawMainMenuBar();
+
+	// Barra de Play / Pause / Stop (debajo del menu, antes del DockSpace para que le quite sitio)
+	DrawToolbar();
 
 	// Enable a DockSpace over the entire main viewport so windows can be docked properly
 	ImGuiViewport* mainViewport = ImGui::GetMainViewport();
@@ -190,7 +208,9 @@ bool ModuleUI::Update(float dt)
 			ImGui::DockBuilderDockWindow("Hierarchy", dock_left);
 			ImGui::DockBuilderDockWindow("Scene", dock_main_id);
 			ImGui::DockBuilderDockWindow("Game", dock_game);
+			ImGui::DockBuilderDockWindow("Assets", dock_down);
 			ImGui::DockBuilderDockWindow("Console", dock_down);
+			ImGui::DockBuilderDockWindow("Resources", dock_down);
 			ImGui::DockBuilderDockWindow("Inspector", dock_right);
 			ImGui::DockBuilderDockWindow("Configuration", dock_right);
 
@@ -208,9 +228,16 @@ bool ModuleUI::Update(float dt)
 	DrawInspectorPanel();
 	DrawConfigurationPanel();
 	DrawConsolePanel();
+	DrawAssetsPanel();
+	DrawResourcesPanel();
 	DrawDepthBufferPanel();
 	DrawAboutPanel();
 
+	// Ventanas modales (fuera de cualquier ventana para que OpenPopup y BeginPopupModal coincidan)
+	DrawSceneFilePopups();
+	DrawAssetsPopups();
+
+	HandleShortcuts();
 
 	// Atajo de teclado: Ctrl+D para duplicar el GameObject seleccionado si Scene o Hierarchy tienen el foco
 	if (sceneOrHierarchyFocused && !ImGui::GetIO().WantTextInput && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D, false))
@@ -247,6 +274,51 @@ bool ModuleUI::DrawMainMenuBar()
 	{
 		if (ImGui::BeginMenu("File"))
 		{
+			Scene* scene = Engine::GetInstance().scene.get();
+			const bool playing = scene && scene->IsInPlayMode();
+
+			if (ImGui::MenuItem("New Scene") && scene)
+			{
+				scene->RequestNewScene();
+			}
+
+			// Lista de escenas guardadas dentro de Assets
+			if (ImGui::BeginMenu("Open Scene"))
+			{
+				std::vector<std::string> files;
+				FileSystem::ListFilesRecursive(FileSystem::ASSETS_DIR, files);
+				bool anyScene = false;
+				for (const std::string& file : files)
+				{
+					if (!ResourceManager::IsSceneFile(file)) continue;
+					anyScene = true;
+					if (ImGui::MenuItem(file.c_str()) && scene)
+					{
+						scene->RequestLoadScene(file);
+					}
+				}
+				if (!anyScene) ImGui::TextDisabled("No hay escenas guardadas en Assets");
+				ImGui::EndMenu();
+			}
+
+			if (ImGui::MenuItem("Load Street Environment") && scene)
+			{
+				scene->RequestDefaultScene();
+			}
+
+			ImGui::Separator();
+			if (ImGui::MenuItem("Save Scene", "Ctrl+S", false, !playing) && scene)
+			{
+				if (scene->GetCurrentScenePath().empty()) openSaveScenePopup = true;
+				else scene->SaveScene(scene->GetCurrentScenePath());
+			}
+			if (ImGui::MenuItem("Save Scene As...", nullptr, false, !playing))
+			{
+				openSaveScenePopup = true;
+			}
+			if (playing) ImGui::TextDisabled("(Para guardar, pulsa Stop)");
+
+			ImGui::Separator();
 			if (ImGui::MenuItem("Exit", "Alt+F4"))
 			{
 				LOG("[UI] Solicitud de salida desde el menú File -> Exit");
@@ -263,6 +335,8 @@ bool ModuleUI::DrawMainMenuBar()
 			ImGui::MenuItem("Inspector", nullptr, &showInspector);
 			ImGui::MenuItem("Console", nullptr, &showConsole);
 			ImGui::MenuItem("Configuration", nullptr, &showConfiguration);
+			ImGui::MenuItem("Assets", nullptr, &showAssets);
+			ImGui::MenuItem("Resources", nullptr, &showResources);
 			ImGui::Separator();
 
 			Render* render = Engine::GetInstance().render.get();
@@ -302,8 +376,14 @@ bool ModuleUI::DrawMainMenuBar()
 			{
 				if (scene)
 				{
-					GameObject* created = scene->CreateEmptyGameObject();
-					scene->SetSelected(created);
+					SelectGameObject(scene->CreateEmptyGameObject());
+				}
+			}
+			if (ImGui::MenuItem("Camera"))
+			{
+				if (scene)
+				{
+					SelectGameObject(scene->CreateCamera());
 				}
 			}
 			ImGui::SeparatorText("3D Primitives");
@@ -320,8 +400,7 @@ bool ModuleUI::DrawMainMenuBar()
 				{
 					if (scene)
 					{
-						GameObject* created = scene->CreatePrimitive(type);
-						scene->SetSelected(created);
+						SelectGameObject(scene->CreatePrimitive(type));
 					}
 				}
 			}
@@ -353,6 +432,208 @@ bool ModuleUI::DrawMainMenuBar()
 	return continueRunning;
 }
 
+void ModuleUI::SelectGameObject(GameObject* object)
+{
+	if (Scene* scene = Engine::GetInstance().scene.get())
+	{
+		scene->SetSelected(object);
+	}
+	inspectorShowsAsset = false;
+}
+
+void ModuleUI::DrawToolbar()
+{
+#ifdef _DEBUG
+	ZoneScoped;
+#endif
+
+	Scene* scene = Engine::GetInstance().scene.get();
+	ImGuiViewport* viewport = ImGui::GetMainViewport();
+	const float height = ImGui::GetFrameHeight() + ImGui::GetStyle().WindowPadding.y * 2.0f;
+	const PlayState state = scene ? scene->GetPlayState() : PlayState::Stopped;
+
+	// En modo Play la barra cambia de color, como en Unity, para que se note que estamos simulando
+	const bool playMode = (state != PlayState::Stopped);
+	if (playMode) ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.12f, 0.22f, 0.38f, 1.0f));
+
+	const ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollWithMouse;
+	if (ImGui::BeginViewportSideBar("##MainToolbar", viewport, ImGuiDir_Up, height, flags) && scene)
+	{
+		// Nombre de la escena a la izquierda
+		const std::string& scenePath = scene->GetCurrentScenePath();
+		ImGui::AlignTextToFramePadding();
+		ImGui::TextDisabled("Escena: %s", scenePath.empty() ? "(sin guardar)" : FileSystem::GetFileName(scenePath).c_str());
+
+		// Botones centrados (o justo despues del nombre de la escena si no caben)
+		const float buttonWidth = 64.0f;
+		const float spacing = ImGui::GetStyle().ItemSpacing.x;
+		const float groupWidth = buttonWidth * 3.0f + spacing * 2.0f;
+		const float textEndX = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + spacing * 2.0f;
+		ImGui::SameLine(std::max(textEndX, (ImGui::GetWindowWidth() - groupWidth) * 0.5f));
+
+		// Play / Stop
+		if (state == PlayState::Stopped)
+		{
+			if (ImGui::Button("Play", ImVec2(buttonWidth, 0.0f))) scene->Play();
+			ImGui::SetItemTooltip("Empieza la simulacion (Ctrl+P). Al parar se recupera el estado actual de la escena.");
+		}
+		else
+		{
+			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.25f, 0.2f, 1.0f));
+			if (ImGui::Button("Stop", ImVec2(buttonWidth, 0.0f))) scene->Stop();
+			ImGui::PopStyleColor();
+			ImGui::SetItemTooltip("Para la simulacion y restaura la escena como estaba al pulsar Play (Ctrl+P)");
+		}
+
+		// Pause (resaltado mientras esta en pausa)
+		ImGui::SameLine();
+		ImGui::BeginDisabled(state == PlayState::Stopped);
+		const bool paused = (state == PlayState::Paused);
+		if (paused) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.6f, 0.15f, 1.0f));
+		if (ImGui::Button(paused ? "Resume" : "Pause", ImVec2(buttonWidth, 0.0f))) scene->Pause();
+		if (paused) ImGui::PopStyleColor();
+		ImGui::EndDisabled();
+
+		// Step (solo en pausa)
+		ImGui::SameLine();
+		ImGui::BeginDisabled(state != PlayState::Paused);
+		if (ImGui::Button("Step", ImVec2(buttonWidth, 0.0f))) scene->Step();
+		ImGui::EndDisabled();
+		ImGui::SetItemTooltip("Avanza un unico frame de la simulacion");
+
+		// Estado y tiempo de juego
+		ImGui::SameLine();
+		const char* stateText = (state == PlayState::Playing) ? "PLAY" : (state == PlayState::Paused) ? "PAUSA" : "EDICION";
+		const ImVec4 stateColor = (state == PlayState::Playing) ? ImVec4(0.4f, 1.0f, 0.5f, 1.0f) :
+			(state == PlayState::Paused) ? ImVec4(1.0f, 0.8f, 0.3f, 1.0f) : ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+		ImGui::TextColored(stateColor, "  %s", stateText);
+		ImGui::SameLine();
+		ImGui::TextDisabled("| Tiempo de juego: %.2f s", scene->GetGameTime());
+
+		// Escala de tiempo
+		ImGui::SameLine();
+		float timeScale = scene->GetTimeScale();
+		ImGui::SetNextItemWidth(90.0f);
+		if (ImGui::DragFloat("Escala de tiempo", &timeScale, 0.01f, 0.0f, 10.0f, "x%.2f"))
+		{
+			scene->SetTimeScale(timeScale);
+		}
+	}
+	ImGui::End();
+
+	if (playMode) ImGui::PopStyleColor();
+}
+
+void ModuleUI::DrawSceneFilePopups()
+{
+	Scene* scene = Engine::GetInstance().scene.get();
+
+	if (openSaveScenePopup)
+	{
+		ImGui::OpenPopup("Guardar escena");
+		openSaveScenePopup = false;
+	}
+	if (ImGui::BeginPopupModal("Guardar escena", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+	{
+		ImGui::Text("La escena se guardara en %s/", FileSystem::SCENES_DIR);
+		if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+		const bool enterPressed = ImGui::InputText("Nombre", saveSceneName, sizeof(saveSceneName), ImGuiInputTextFlags_EnterReturnsTrue);
+
+		const std::string sceneName = saveSceneName;
+		const bool validName = !sceneName.empty() && sceneName.find_first_of("/\\:*?\"<>|") == std::string::npos;
+
+		ImGui::BeginDisabled(!validName || scene == nullptr);
+		if (ImGui::Button("Guardar", ImVec2(120.0f, 0.0f)) || (enterPressed && validName && scene != nullptr))
+		{
+			scene->SaveScene(FileSystem::Join(FileSystem::SCENES_DIR, sceneName + FileSystem::SCENE_EXTENSION));
+			InvalidateAssetsCache();
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::EndDisabled();
+		ImGui::SameLine();
+		if (ImGui::Button("Cancelar", ImVec2(120.0f, 0.0f)))
+		{
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::EndPopup();
+	}
+}
+
+void ModuleUI::HandleShortcuts()
+{
+	ImGuiIO& io = ImGui::GetIO();
+	if (io.WantTextInput) return;
+
+	Scene* scene = Engine::GetInstance().scene.get();
+	if (scene == nullptr) return;
+
+	// Ctrl+S: guardar escena
+	if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false) && !scene->IsInPlayMode())
+	{
+		if (scene->GetCurrentScenePath().empty()) openSaveScenePopup = true;
+		else scene->SaveScene(scene->GetCurrentScenePath());
+	}
+
+	// Ctrl+P: Play / Stop      Ctrl+Shift+P: Pause
+	if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_P, false))
+	{
+		if (io.KeyShift) scene->Pause();
+		else if (scene->IsInPlayMode()) scene->Stop();
+		else scene->Play();
+	}
+}
+
+void ModuleUI::DrawSceneOverlayBar()
+{
+	Render* render = Engine::GetInstance().render.get();
+	Scene* scene = Engine::GetInstance().scene.get();
+	if (!render || !scene) return;
+
+	// Menu "Gizmos" con las opciones de depuracion de la vista Scene
+	if (ImGui::Button("Gizmos")) ImGui::OpenPopup("SceneGizmosPopup");
+	if (ImGui::BeginPopup("SceneGizmosPopup"))
+	{
+		RenderSettings rs = render->GetSettings();
+		bool changed = false;
+		ImGui::SeparatorText("Frustum culling");
+		changed |= ImGui::Checkbox("Culling con la camara del editor", &rs.editorFrustumCulling);
+		changed |= ImGui::Checkbox("Vista previa del culling de la Main Camera", &rs.cullingPreview);
+		ImGui::SetItemTooltip("La vista Scene solo dibuja lo que ve la Main Camera:\nmuevela y veras aparecer/desaparecer los objetos");
+		bool useOctree = scene->IsUsingOctree();
+		if (ImGui::Checkbox("Usar octree (culling y picking)", &useOctree)) scene->SetUseOctree(useOctree);
+
+		ImGui::SeparatorText("Gizmos");
+		changed |= ImGui::Checkbox("AABB de todas las mallas (verde/rojo)", &rs.showAABBs);
+		changed |= ImGui::Checkbox("AABB del seleccionado", &rs.showSelectedAABB);
+		changed |= ImGui::Checkbox("Frustum de la Main Camera", &rs.showCameraFrustum);
+		changed |= ImGui::Checkbox("Nodos del octree", &rs.showOctree);
+		changed |= ImGui::Checkbox("Rayo del raton (picking)", &rs.showPickRay);
+		changed |= ImGui::Checkbox("Grid", &rs.showGrid);
+		changed |= ImGui::Checkbox("Ejes", &rs.showAxis);
+		if (changed) render->SetSettings(rs);
+		ImGui::EndPopup();
+	}
+
+	// Estadisticas de culling del ultimo frame
+	const RenderStats& stats = render->GetStats();
+	ImGui::SameLine();
+	if (stats.sceneCulling)
+	{
+		ImGui::TextDisabled("Dibujados %d / %d  |  Nodos octree visitados %d  |  AABB probadas %d",
+			stats.sceneDrawn, stats.sceneCandidates, stats.sceneQuery.nodesVisited, stats.sceneQuery.objectsTested);
+	}
+	else
+	{
+		ImGui::TextDisabled("Dibujados %d / %d (sin culling)", stats.sceneDrawn, stats.sceneCandidates);
+	}
+
+	if (scene->IsInPlayMode())
+	{
+		ImGui::SameLine();
+		ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "[MODO PLAY]");
+	}
+}
+
 void ModuleUI::DrawScenePanel()
 {
 #ifdef _DEBUG
@@ -361,8 +642,8 @@ void ModuleUI::DrawScenePanel()
 
 	Render* render = Engine::GetInstance().render.get();
 	Scene* scene = Engine::GetInstance().scene.get();
-	GameObject* mainCamera = scene ? scene->GetMainCameraObject() : nullptr;
-	CameraComponent* camComp = mainCamera ? mainCamera->GetComponent<CameraComponent>() : nullptr;
+	GameObject* editorCamera = scene ? scene->GetEditorCameraObject() : nullptr;
+	CameraComponent* camComp = editorCamera ? editorCamera->GetComponent<CameraComponent>() : nullptr;
 
 	if (!showScene)
 	{
@@ -386,6 +667,8 @@ void ModuleUI::DrawScenePanel()
 	}
 
 	if (render) render->SetViewportVisible(true);
+
+	DrawSceneOverlayBar();
 
 	ImVec2 viewportSize = ImGui::GetContentRegionAvail();
 	if (render && viewportSize.x > 0 && viewportSize.y > 0)
@@ -411,6 +694,63 @@ void ModuleUI::DrawScenePanel()
 			float localMouseX = mousePos.x - cursorScreenPos.x;
 			float localMouseY = mousePos.y - cursorScreenPos.y;
 			camComp->PerformRaycast(localMouseX, localMouseY, viewportSize.x, viewportSize.y);
+			inspectorShowsAsset = false;
+		}
+
+		// Soltar assets sobre la vista Scene:
+		//   modelo  -> se instancia donde apunta el raton (sobre el objeto que haya debajo)
+		//   malla   -> se crea un GameObject con esa malla
+		//   textura -> se aplica al objeto que hay debajo del raton
+		if (ImGui::BeginDragDropTarget() && scene && camComp)
+		{
+			const ImVec2 mousePos = ImGui::GetMousePos();
+			const Ray ray = camComp->ScreenPointToRay(mousePos.x - cursorScreenPos.x, mousePos.y - cursorScreenPos.y, viewportSize.x, viewportSize.y);
+			float hitDistance = 0.0f;
+
+			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(EditorDragDrop::ASSET_MODEL))
+			{
+				const EditorDragDrop::AssetPayload asset = EditorDragDrop::ReadAssetPayload(payload->Data, payload->DataSize);
+				GameObject* hit = scene->PickObject(ray, &hitDistance);
+				const glm::vec3 position = hit ? ray.GetPoint(hitDistance) : ray.GetPoint(10.0f);
+				if (GameObject* instance = scene->InstantiateModel(asset.uid))
+				{
+					if (TransformComponent* transform = instance->GetComponent<TransformComponent>()) transform->SetPosition(position);
+					SelectGameObject(instance);
+				}
+			}
+			else if (const ImGuiPayload* meshPayload = ImGui::AcceptDragDropPayload(EditorDragDrop::ASSET_MESH))
+			{
+				const EditorDragDrop::AssetPayload asset = EditorDragDrop::ReadAssetPayload(meshPayload->Data, meshPayload->DataSize);
+				GameObject* hit = scene->PickObject(ray, &hitDistance);
+				const glm::vec3 position = hit ? ray.GetPoint(hitDistance) : ray.GetPoint(10.0f);
+
+				GameObject* created = scene->CreateEmptyGameObject();
+				const Resource* meshResource = Engine::GetInstance().resources ? Engine::GetInstance().resources->GetResource(asset.uid) : nullptr;
+				if (meshResource) created->SetName(scene->MakeUniqueName(meshResource->GetName()));
+				created->AddComponent(std::make_unique<MeshComponent>(created, asset.uid));
+				created->AddComponent(std::make_unique<MaterialComponent>(created));
+				if (TransformComponent* transform = created->GetComponent<TransformComponent>()) transform->SetPosition(position);
+				SelectGameObject(created);
+			}
+			else if (const ImGuiPayload* texturePayload = ImGui::AcceptDragDropPayload(EditorDragDrop::ASSET_TEXTURE))
+			{
+				const EditorDragDrop::AssetPayload asset = EditorDragDrop::ReadAssetPayload(texturePayload->Data, texturePayload->DataSize);
+				if (GameObject* hit = scene->PickObject(ray, &hitDistance))
+				{
+					ImporterManager::AssignTextureToHierarchy(asset.uid, hit);
+					SelectGameObject(hit);
+				}
+				else
+				{
+					LOG_WARNING("[UI] Suelta la textura encima de un objeto con malla");
+				}
+			}
+			else if (const ImGuiPayload* scenePayload = ImGui::AcceptDragDropPayload(EditorDragDrop::ASSET_SCENE))
+			{
+				const EditorDragDrop::AssetPayload asset = EditorDragDrop::ReadAssetPayload(scenePayload->Data, scenePayload->DataSize);
+				scene->RequestLoadScene(asset.path);
+			}
+			ImGui::EndDragDropTarget();
 		}
 	}
 
@@ -462,13 +802,22 @@ void ModuleUI::DrawGamePanel()
 	Scene* scene = Engine::GetInstance().scene.get();
 	GameObject* gameCam = scene ? scene->GetGameCameraObject() : nullptr;
 
+	// Estadisticas del frustum culling de la Main Camera
+	if (render)
+	{
+		const RenderStats& stats = render->GetStats();
+		ImGui::TextDisabled("Main Camera: dibujados %d / %d %s", stats.gameDrawn, stats.gameCandidates,
+			stats.gameCulling ? "(frustum culling ON)" : "(frustum culling OFF)");
+	}
+
 	ImVec2 viewportSize = ImGui::GetContentRegionAvail();
 	if (render && viewportSize.x > 0 && viewportSize.y > 0)
 	{
 		render->SetGameViewportSize((int)viewportSize.x, (int)viewportSize.y);
 	}
 
-	if (!gameCam || !gameCam->IsActive() || !gameCam->GetComponent<CameraComponent>())
+	const CameraComponent* gameCamComponent = gameCam ? gameCam->GetComponent<CameraComponent>() : nullptr;
+	if (!gameCam || !gameCam->IsActiveInHierarchy() || !gameCamComponent || !gameCamComponent->IsActive())
 	{
 		ImGui::TextDisabled("Display 1: No cameras rendering.");
 		ImGui::End();
@@ -502,11 +851,16 @@ void ModuleUI::DrawHierarchyPanel()
 		Scene* scene = Engine::GetInstance().scene.get();
 		GameObject* selected = scene ? scene->GetSelected() : nullptr;
 
+		// Solo el frame en el que cambia la seleccion se abren sus padres (luego se pueden plegar)
+		revealSelectionInHierarchy = (selected != lastHierarchySelection);
+		lastHierarchySelection = selected;
+
 		if (scene)
 		{
 			GameObject* root = scene->GetRoot();
 			if (root)
 			{
+				// Copia: dibujar un nodo puede reordenar la lista de hijos (drag & drop)
 				const std::vector<GameObject*> rootChildren = root->GetChildren();
 				for (GameObject* child : rootChildren)
 				{
@@ -518,22 +872,50 @@ void ModuleUI::DrawHierarchyPanel()
 			}
 		}
 
-		// Zona vacía inferior: soltar aquí reemparenta al nodo raíz de la escena
+		// Zona vacía inferior: soltar aquí reemparenta al nodo raíz (o instancia un modelo en la raíz)
 		ImVec2 avail = ImGui::GetContentRegionAvail();
 		if (avail.y > 0.0f)
 		{
 			ImGui::Dummy(avail);
+			if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
+			{
+				SelectGameObject(nullptr);
+			}
 			if (ImGui::BeginDragDropTarget())
 			{
-				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("HIERARCHY_GAMEOBJECT"))
+				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(EditorDragDrop::GAMEOBJECT))
 				{
-					GameObject* droppedNode = *(GameObject**)payload->Data;
+					uint64_t uid = 0;
+					std::memcpy(&uid, payload->Data, sizeof(uid));
+					GameObject* droppedNode = scene ? scene->FindByUID(uid) : nullptr;
 					if (droppedNode && scene)
 					{
 						droppedNode->SetParent(scene->GetRoot());
 					}
 				}
+				if (const ImGuiPayload* modelPayload = ImGui::AcceptDragDropPayload(EditorDragDrop::ASSET_MODEL))
+				{
+					const EditorDragDrop::AssetPayload asset = EditorDragDrop::ReadAssetPayload(modelPayload->Data, modelPayload->DataSize);
+					if (scene) SelectGameObject(scene->InstantiateModel(asset.uid));
+				}
 				ImGui::EndDragDropTarget();
+			}
+
+			// Clic derecho en la zona vacia: crear objetos en la raiz
+			if (ImGui::BeginPopupContextItem("HierarchyEmptyContext"))
+			{
+				if (ImGui::MenuItem("Create Empty") && scene) SelectGameObject(scene->CreateEmptyGameObject());
+				if (ImGui::MenuItem("Create Camera") && scene) SelectGameObject(scene->CreateCamera());
+				if (ImGui::BeginMenu("Create Primitive"))
+				{
+					const PrimitiveType types[] = { PrimitiveType::Cube, PrimitiveType::Sphere, PrimitiveType::Plane, PrimitiveType::Cylinder, PrimitiveType::Pyramid };
+					for (PrimitiveType type : types)
+					{
+						if (ImGui::MenuItem(GeometryGenerator::GetName(type)) && scene) SelectGameObject(scene->CreatePrimitive(type));
+					}
+					ImGui::EndMenu();
+				}
+				ImGui::EndPopup();
 			}
 		}
 	}
@@ -548,6 +930,7 @@ void ModuleUI::DrawHierarchyNode(GameObject* node, GameObject* selected)
 
 	if (!node) return;
 
+	Scene* scene = Engine::GetInstance().scene.get();
 	const bool hasChildren = !node->GetChildren().empty();
 
 	ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick | ImGuiTreeNodeFlags_SpanAvailWidth;
@@ -561,45 +944,71 @@ void ModuleUI::DrawHierarchyNode(GameObject* node, GameObject* selected)
 		flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
 	}
 
+	// Si se acaba de seleccionar un objeto que esta dentro de este nodo, se abre para que se vea
+	if (revealSelectionInHierarchy && selected != nullptr && selected->IsDescendantOf(node))
+	{
+		ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+	}
+
+	// Objetos desactivados en gris; la Main Camera en azul
+	const bool isGameCamera = scene && scene->GetGameCameraObject() == node;
+	const bool pushedColor = !node->IsActive() || isGameCamera;
 	if (!node->IsActive())
 	{
 		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
 	}
+	else if (isGameCamera)
+	{
+		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.8f, 1.0f, 1.0f));
+	}
 
 	bool nodeOpen = ImGui::TreeNodeEx((void*)node, flags, "%s", node->GetName().c_str());
 
-	if (!node->IsActive())
+	if (pushedColor)
 	{
 		ImGui::PopStyleColor();
 	}
 
 	// 1. Selección con clic izquierdo
-	if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
+	if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen())
 	{
-		if (Engine::GetInstance().scene)
-		{
-			Engine::GetInstance().scene->SetSelected(node);
-		}
+		SelectGameObject(node);
 	}
 
-	// 2. Drag & Drop: Origen de arrastre
+	// 2. Drag & Drop: Origen de arrastre (se envia el UID, nunca un puntero)
 	if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None))
 	{
-		ImGui::SetDragDropPayload("HIERARCHY_GAMEOBJECT", &node, sizeof(GameObject*));
+		const uint64_t uid = static_cast<uint64_t>(node->GetUUID());
+		ImGui::SetDragDropPayload(EditorDragDrop::GAMEOBJECT, &uid, sizeof(uid));
 		ImGui::Text("Mover '%s'", node->GetName().c_str());
 		ImGui::EndDragDropSource();
 	}
 
-	// 3. Drag & Drop: Destino de soltado (reemparentar como hijo de 'node') //TODO: PASAR ESTO CON EL OTRO DROP
+	// 3. Drag & Drop: Destino de soltado
+	//    - GameObject -> pasa a ser hijo de 'node' (reparent)
+	//    - Modelo     -> se instancia como hijo de 'node'
+	//    - Textura    -> se aplica a 'node' y a sus hijos
 	if (ImGui::BeginDragDropTarget())
 	{
-		if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("HIERARCHY_GAMEOBJECT"))
+		if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(EditorDragDrop::GAMEOBJECT))
 		{
-			GameObject* droppedNode = *(GameObject**)payload->Data;
+			uint64_t uid = 0;
+			std::memcpy(&uid, payload->Data, sizeof(uid));
+			GameObject* droppedNode = scene ? scene->FindByUID(uid) : nullptr;
 			if (droppedNode && droppedNode != node)
 			{
 				droppedNode->SetParent(node);
 			}
+		}
+		if (const ImGuiPayload* modelPayload = ImGui::AcceptDragDropPayload(EditorDragDrop::ASSET_MODEL))
+		{
+			const EditorDragDrop::AssetPayload asset = EditorDragDrop::ReadAssetPayload(modelPayload->Data, modelPayload->DataSize);
+			if (scene) SelectGameObject(scene->InstantiateModel(asset.uid, node));
+		}
+		if (const ImGuiPayload* texturePayload = ImGui::AcceptDragDropPayload(EditorDragDrop::ASSET_TEXTURE))
+		{
+			const EditorDragDrop::AssetPayload asset = EditorDragDrop::ReadAssetPayload(texturePayload->Data, texturePayload->DataSize);
+			ImporterManager::AssignTextureToHierarchy(asset.uid, node);
 		}
 		ImGui::EndDragDropTarget();
 	}
@@ -607,17 +1016,14 @@ void ModuleUI::DrawHierarchyNode(GameObject* node, GameObject* selected)
 	// 4. Menú contextual con clic derecho
 	if (ImGui::BeginPopupContextItem())
 	{
-		Scene* scene = Engine::GetInstance().scene.get();
-
 		if (ImGui::MenuItem("Create Empty Child"))
 		{
-			if (scene)
-			{
-				GameObject* child = scene->CreateEmptyGameObject(node);
-				scene->SetSelected(child);
-			}
+			if (scene) SelectGameObject(scene->CreateEmptyGameObject(node));
 		}
-		// Click Izquierdo en un objeto
+		if (ImGui::MenuItem("Create Camera Child"))
+		{
+			if (scene) SelectGameObject(scene->CreateCamera(node));
+		}
 		if (ImGui::BeginMenu("Create Primitive Child"))
 		{
 			const PrimitiveType types[] = {
@@ -631,11 +1037,7 @@ void ModuleUI::DrawHierarchyNode(GameObject* node, GameObject* selected)
 			{
 				if (ImGui::MenuItem(GeometryGenerator::GetName(type)))
 				{
-					if (scene)
-					{
-						GameObject* child = scene->CreatePrimitive(type, node);
-						scene->SetSelected(child);
-					}
+					if (scene) SelectGameObject(scene->CreatePrimitive(type, node));
 				}
 			}
 			ImGui::EndMenu();
@@ -646,6 +1048,20 @@ void ModuleUI::DrawHierarchyNode(GameObject* node, GameObject* selected)
 			if (scene)
 			{
 				scene->DuplicateGameObject(node);
+			}
+		}
+
+		if (ImGui::MenuItem("Unparent (mover a la raiz)", nullptr, false, scene && node->GetParent() != scene->GetRoot()))
+		{
+			if (scene) node->SetParent(scene->GetRoot());
+		}
+
+		if (ImGui::MenuItem("Focus (F)"))
+		{
+			GameObject* editorCamera = scene ? scene->GetEditorCameraObject() : nullptr;
+			if (CameraComponent* camera = editorCamera ? editorCamera->GetComponent<CameraComponent>() : nullptr)
+			{
+				camera->FocusOnObject(node);
 			}
 		}
 
@@ -689,241 +1105,424 @@ void ModuleUI::DrawInspectorPanel()
 		Scene* scene = Engine::GetInstance().scene.get();
 		GameObject* selected = scene ? scene->GetSelected() : nullptr;
 
-		if (selected)
+		// Si cambia el GameObject seleccionado (por ejemplo con un clic en la vista Scene),
+		// el Inspector vuelve a mostrar GameObjects
+		if (selected != lastInspectedObject)
 		{
-			bool isActive = selected->IsActive();
-			if (ImGui::Checkbox("##ActiveGO", &isActive))
-			{
-				if (isActive) selected->Enable();
-				else selected->Disable();
-			}
-			ImGui::SameLine();
+			lastInspectedObject = selected;
+			if (selected != nullptr) inspectorShowsAsset = false;
+		}
 
-			char nameBuf[128] = "";
-			strncpy_s(nameBuf, sizeof(nameBuf), selected->GetName().c_str(), _TRUNCATE);
-			ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 68.0f);
-			if (ImGui::InputText("##GOName", nameBuf, sizeof(nameBuf), ImGuiInputTextFlags_EnterReturnsTrue))
-			{
-				if (nameBuf[0] != '\0')
-				{
-					selected->SetName(nameBuf);
-				}
-			}
-
-			ImGui::Separator();
-
-			// =====================================================================
-			// 1. TRANSFORM COMPONENT
-			// =====================================================================
-			TransformComponent* transform = selected->GetComponent<TransformComponent>();
-			if (transform && ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen))
-			{
-				if (ImGui::BeginTable("TransformTable", 2, ImGuiTableFlags_SizingFixedFit))
-				{
-					ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 75.0f);
-					ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-
-					glm::vec3 pos = transform->GetPosition();
-					if (DrawVec3Control("Position", pos, 0.1f))
-					{
-						transform->SetPosition(pos);
-					}
-
-					glm::vec3 rot = transform->GetRotation();
-					if (DrawVec3Control("Rotation", rot, 1.0f))
-					{
-						transform->SetRotation(rot);
-					}
-
-					glm::vec3 scl = transform->GetScale();
-					if (DrawVec3Control("Scale", scl, 0.05f))
-					{
-						transform->SetScale(scl);
-					}
-
-					ImGui::EndTable();
-				}
-
-				if (ImGui::SmallButton("Reset Transform"))
-				{
-					transform->SetPosition(glm::vec3(0.0f));
-					transform->SetRotation(glm::vec3(0.0f));
-					transform->SetScale(glm::vec3(1.0f));
-				}
-			}
-
-			// =====================================================================
-			// 2. MESH COMPONENT
-			// =====================================================================
-			std::vector<MeshComponent*> meshesToInspect;
-			std::function<void(GameObject*)> collectMeshes = [&](GameObject* node)
-				{
-					if (!node) return;
-					if (MeshComponent* m = node->GetComponent<MeshComponent>())
-					{
-						if (m->GetPrimitive()) meshesToInspect.push_back(m);
-					}
-					for (GameObject* child : node->GetChildren())
-					{
-						collectMeshes(child);
-					}
-				};
-			collectMeshes(selected);
-
-			if (!meshesToInspect.empty() && ImGui::CollapsingHeader("Mesh", ImGuiTreeNodeFlags_DefaultOpen))
-			{
-				size_t totalVertices = 0;
-				size_t totalTriangles = 0;
-				size_t totalIndices = 0;
-				glm::vec3 bMin(FLT_MAX);
-				glm::vec3 bMax(-FLT_MAX);
-
-				for (MeshComponent* m : meshesToInspect)
-				{
-					const Primitive* prim = m->GetPrimitive();
-					if (prim)
-					{
-						totalVertices += prim->GetVertexCount();
-						totalTriangles += prim->GetTriangleCount();
-						totalIndices += prim->GetIndices().size();
-						bMin = glm::min(bMin, prim->GetBoundsMin());
-						bMax = glm::max(bMax, prim->GetBoundsMax());
-					}
-				}
-
-				if (meshesToInspect.size() > 1)
-				{
-					ImGui::BulletText("Sub-mallas (Partes): %zu", meshesToInspect.size());
-				}
-				ImGui::BulletText("Vértices: %zu", totalVertices);
-				ImGui::BulletText("Triángulos (Caras): %zu", totalTriangles);
-				ImGui::BulletText("Índices: %zu", totalIndices);
-				ImGui::BulletText("AABB Min: (%.2f, %.2f, %.2f)", bMin.x, bMin.y, bMin.z);
-				ImGui::BulletText("AABB Max: (%.2f, %.2f, %.2f)", bMax.x, bMax.y, bMax.z);
-
-				ImGui::Spacing();
-				ImGui::SeparatorText("Visualización de Normales");
-
-				Render* render = Engine::GetInstance().render.get();
-				if (render)
-				{
-					RenderSettings rs = render->GetSettings();
-					bool vertexNormals = (rs.normals == NormalsMode::Vertex || rs.normals == NormalsMode::Both);
-					bool faceNormals = (rs.normals == NormalsMode::Face || rs.normals == NormalsMode::Both);
-
-					bool changed = false;
-					changed |= ImGui::Checkbox("Mostrar Normales por Vértice (Amarillo)", &vertexNormals);
-					changed |= ImGui::Checkbox("Mostrar Normales por Cara (Cian)", &faceNormals);
-					changed |= ImGui::Checkbox("Aplicar a todos los objetos de la escena", &rs.normalsAllObjects);
-
-					if (changed)
-					{
-						if (vertexNormals && faceNormals) rs.normals = NormalsMode::Both;
-						else if (vertexNormals) rs.normals = NormalsMode::Vertex;
-						else if (faceNormals) rs.normals = NormalsMode::Face;
-						else rs.normals = NormalsMode::None;
-
-						render->SetSettings(rs);
-					}
-				}
-			}
-
-			// =====================================================================
-			// 3. MATERIAL / TEXTURE COMPONENT
-			// =====================================================================
-			std::vector<MaterialComponent*> materialsToInspect;
-			std::function<void(GameObject*)> collectMaterials = [&](GameObject* node)
-				{
-					if (!node) return;
-					if (MaterialComponent* m = node->GetComponent<MaterialComponent>())
-					{
-						materialsToInspect.push_back(m);
-					}
-					for (GameObject* child : node->GetChildren())
-					{
-						collectMaterials(child);
-					}
-				};
-			collectMaterials(selected);
-
-			if (!materialsToInspect.empty() && ImGui::CollapsingHeader("Texture & Material", ImGuiTreeNodeFlags_DefaultOpen))
-			{
-				MaterialComponent* primaryMat = materialsToInspect[0];
-
-				glm::vec4 color = primaryMat->GetColor();
-				if (ImGui::ColorEdit4("Color Base (Alpha)", glm::value_ptr(color), ImGuiColorEditFlags_PickerHueWheel))
-				{
-					for (MaterialComponent* m : materialsToInspect)
-					{
-						m->SetColor(color);
-					}
-				}
-
-				ImGui::Spacing();
-				bool usingTexture = primaryMat->GetUseTexture();
-				if (ImGui::Checkbox("Usar Textura Difusa", &usingTexture))
-				{
-					for (MaterialComponent* m : materialsToInspect)
-					{
-						m->SetUseTexture(usingTexture);
-					}
-				}
-
-				bool usingChecker = primaryMat->GetUseCheckerboard();
-				if (ImGui::Checkbox("Textura Checkerboard (Blanco/Negro)", &usingChecker))
-				{
-					for (MaterialComponent* m : materialsToInspect)
-					{
-						m->SetUseCheckerboard(usingChecker);
-					}
-				}
-
-				ImGui::Spacing();
-				ImGui::SeparatorText("Datos de Textura");
-				const TextureInfo* texInfo = primaryMat->GetTexture();
-				if (texInfo)
-				{
-					ImGui::BulletText("Path: %s", texInfo->path.c_str());
-					ImGui::BulletText("Tamaño: %d x %d px", texInfo->width, texInfo->height);
-					ImGui::BulletText("OpenGL Texture ID: %u", texInfo->id);
-				}
-				else
-				{
-					ImGui::TextDisabled("Sin textura difusa asignada (arrastra un PNG/JPG/DDS a la ventana).");
-				}
-
-				unsigned int activeId = primaryMat->GetActiveTextureID();
-				if (activeId != 0)
-				{
-					ImGui::Spacing();
-					ImGui::TextDisabled("Vista previa activa:");
-					ImGui::Image((ImTextureID)(intptr_t)activeId, ImVec2(64, 64));
-				}
-			}
-
-			// =====================================================================
-			// 4. CAMERA COMPONENT (si el GameObject seleccionado es una cámara)
-			// =====================================================================
-			CameraComponent* cam = selected->GetComponent<CameraComponent>();
-			if (cam && ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen))
-			{
-				ImGui::SliderFloat("FOV (Grados)", &cam->fov, 10.0f, 120.0f, "%.1f");
-				ImGui::DragFloat("Near Plane", &cam->nearPlane, 0.01f, 0.01f, 10.0f, "%.2f");
-				ImGui::DragFloat("Far Plane", &cam->farPlane, 1.0f, 10.0f, 1000.0f, "%.1f");
-
-				float speed = cam->GetMovementSpeed();
-				if (ImGui::SliderFloat("Velocidad", &speed, 0.5f, 30.0f, "%.1f"))
-				{
-					cam->SetMovementSpeed(speed);
-				}
-			}
+		if (inspectorShowsAsset && !selectedAssetPath.empty())
+		{
+			DrawAssetInspector();
+		}
+		else if (selected)
+		{
+			DrawGameObjectInspector(selected);
 		}
 		else
 		{
 			ImGui::TextDisabled("Selecciona un GameObject en Hierarchy o en Scene para inspeccionar sus componentes.");
+			ImGui::TextDisabled("Selecciona un fichero en Assets para ver sus opciones de importacion.");
 		}
 	}
 	ImGui::End();
+}
+
+void ModuleUI::DrawGameObjectInspector(GameObject* selected)
+{
+	bool isActive = selected->IsActive();
+	if (ImGui::Checkbox("##ActiveGO", &isActive))
+	{
+		if (isActive) selected->Enable();
+		else selected->Disable();
+	}
+	ImGui::SameLine();
+
+	char nameBuf[128] = "";
+	strncpy_s(nameBuf, sizeof(nameBuf), selected->GetName().c_str(), _TRUNCATE);
+	ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 68.0f);
+	if (ImGui::InputText("##GOName", nameBuf, sizeof(nameBuf), ImGuiInputTextFlags_EnterReturnsTrue))
+	{
+		if (nameBuf[0] != '\0')
+		{
+			selected->SetName(nameBuf);
+		}
+	}
+	ImGui::TextDisabled("UID: %llu", (unsigned long long)static_cast<uint64_t>(selected->GetUUID()));
+
+	ImGui::Separator();
+
+	// =====================================================================
+	// 1. TRANSFORM COMPONENT
+	// =====================================================================
+	TransformComponent* transform = selected->GetComponent<TransformComponent>();
+	if (transform && ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		if (ImGui::BeginTable("TransformTable", 2, ImGuiTableFlags_SizingFixedFit))
+		{
+			ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 75.0f);
+			ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+
+			glm::vec3 pos = transform->GetPosition();
+			if (DrawVec3Control("Position", pos, 0.1f))
+			{
+				transform->SetPosition(pos);
+			}
+
+			glm::vec3 rot = transform->GetRotation();
+			if (DrawVec3Control("Rotation", rot, 1.0f))
+			{
+				transform->SetRotation(rot);
+			}
+
+			glm::vec3 scl = transform->GetScale();
+			if (DrawVec3Control("Scale", scl, 0.05f))
+			{
+				transform->SetScale(scl);
+			}
+
+			ImGui::EndTable();
+		}
+
+		if (ImGui::SmallButton("Reset Transform"))
+		{
+			transform->SetPosition(glm::vec3(0.0f));
+			transform->SetRotation(glm::vec3(0.0f));
+			transform->SetScale(glm::vec3(1.0f));
+		}
+	}
+
+	// =====================================================================
+	// 2. MESH, MATERIAL Y CAMERA
+	// =====================================================================
+	DrawMeshInspector(selected);
+	DrawMaterialInspector(selected);
+	DrawCameraInspector(selected);
+
+	// Padre de un modelo (sin malla propia): se puede soltar una textura para todas sus partes
+	if (selected->GetComponent<MeshComponent>() == nullptr && !selected->GetChildren().empty())
+	{
+		const AABB bounds = selected->GetWorldAABB(true);
+		if (bounds.IsValid() && ImGui::CollapsingHeader("Modelo (hijos)", ImGuiTreeNodeFlags_DefaultOpen))
+		{
+			ImGui::BulletText("Hijos directos: %zu", selected->GetChildren().size());
+			const glm::vec3 size = bounds.GetSize();
+			ImGui::BulletText("Tamano (AABB del mundo): %.2f x %.2f x %.2f", size.x, size.y, size.z);
+			ImGui::Button("Suelta aqui una textura para aplicarla a todas las partes", ImVec2(-1.0f, 0.0f));
+			if (ImGui::BeginDragDropTarget())
+			{
+				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(EditorDragDrop::ASSET_TEXTURE))
+				{
+					const EditorDragDrop::AssetPayload asset = EditorDragDrop::ReadAssetPayload(payload->Data, payload->DataSize);
+					ImporterManager::AssignTextureToHierarchy(asset.uid, selected);
+				}
+				ImGui::EndDragDropTarget();
+			}
+		}
+	}
+
+	ImGui::Spacing();
+	ImGui::Separator();
+	DrawAddComponentButton(selected);
+}
+
+void ModuleUI::DrawMeshInspector(GameObject* selected)
+{
+	MeshComponent* mesh = selected->GetComponent<MeshComponent>();
+	if (mesh == nullptr) return;
+	if (!ImGui::CollapsingHeader("Mesh", ImGuiTreeNodeFlags_DefaultOpen)) return;
+
+	ResourceManager* resources = Engine::GetInstance().resources.get();
+	ImGui::PushID("MeshComponent");
+
+	bool enabled = mesh->IsActive();
+	if (ImGui::Checkbox("Activo", &enabled))
+	{
+		if (enabled) mesh->Enable();
+		else mesh->Disable();
+	}
+	ImGui::SameLine();
+	if (ImGui::SmallButton("Quitar componente"))
+	{
+		selected->RemoveComponent(COMPONENT_MESH);
+		ImGui::PopID();
+		return;
+	}
+
+	// ----- Selector de malla: combo con todas las mallas importadas + drag & drop -----
+	const ResourceMesh* meshResource = mesh->GetMeshResource();
+	std::string preview = meshResource ? meshResource->GetName() : (mesh->IsMeshMissing() ? std::string("(Missing)") : std::string("(Ninguna)"));
+	if (ImGui::BeginCombo("Malla", preview.c_str(), ImGuiComboFlags_HeightLarge))
+	{
+		if (ImGui::Selectable("(Ninguna)", mesh->GetMeshUID() == INVALID_UID))
+		{
+			mesh->SetMesh(INVALID_UID);
+		}
+		if (resources)
+		{
+			for (const Resource* resource : resources->GetResourcesOfType(ResourceType::Mesh))
+			{
+				ImGui::PushID(resource);
+				std::string label = resource->GetName();
+				label += resource->IsBuiltIn() ? "  [Built-in]" : "  [" + FileSystem::GetFileName(resource->GetAssetPath()) + "]";
+				if (ImGui::Selectable(label.c_str(), resource->GetUID() == mesh->GetMeshUID()))
+				{
+					mesh->SetMesh(resource->GetUID());
+				}
+				ImGui::PopID();
+			}
+		}
+		ImGui::EndCombo();
+	}
+	if (ImGui::BeginDragDropTarget())
+	{
+		if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(EditorDragDrop::ASSET_MESH))
+		{
+			const EditorDragDrop::AssetPayload asset = EditorDragDrop::ReadAssetPayload(payload->Data, payload->DataSize);
+			mesh->SetMesh(asset.uid);
+		}
+		ImGui::EndDragDropTarget();
+	}
+	ImGui::SetItemTooltip("Elige una malla o arrastra aqui una malla desde la ventana Assets\n(despliega un modelo con la flecha para ver sus mallas)");
+
+	// ----- Informacion de la malla -----
+	if (meshResource)
+	{
+		ImGui::BulletText("UID: %llu  |  Referencias: %u", (unsigned long long)meshResource->GetUID(), meshResource->GetReferenceCount());
+		ImGui::BulletText("Vertices: %zu  |  Triangulos: %zu", meshResource->GetVertexCount(), meshResource->GetTriangleCount());
+		const AABB local = mesh->GetLocalAABB();
+		const AABB world = selected->GetWorldAABB(false);
+		if (local.IsValid())
+		{
+			ImGui::BulletText("AABB local min (%.2f, %.2f, %.2f) max (%.2f, %.2f, %.2f)",
+				local.min.x, local.min.y, local.min.z, local.max.x, local.max.y, local.max.z);
+		}
+		if (world.IsValid())
+		{
+			ImGui::BulletText("AABB mundo min (%.2f, %.2f, %.2f) max (%.2f, %.2f, %.2f)",
+				world.min.x, world.min.y, world.min.z, world.max.x, world.max.y, world.max.z);
+		}
+	}
+	else if (mesh->IsMeshMissing())
+	{
+		ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "La malla asignada ya no existe (asset borrado)");
+	}
+
+	// ----- Visualizacion de normales (depuracion) -----
+	ImGui::Spacing();
+	ImGui::SeparatorText("Visualización de Normales");
+
+	Render* render = Engine::GetInstance().render.get();
+	if (render)
+	{
+		RenderSettings rs = render->GetSettings();
+		bool vertexNormals = (rs.normals == NormalsMode::Vertex || rs.normals == NormalsMode::Both);
+		bool faceNormals = (rs.normals == NormalsMode::Face || rs.normals == NormalsMode::Both);
+
+		bool changed = false;
+		changed |= ImGui::Checkbox("Mostrar Normales por Vértice (Amarillo)", &vertexNormals);
+		changed |= ImGui::Checkbox("Mostrar Normales por Cara (Cian)", &faceNormals);
+		changed |= ImGui::Checkbox("Aplicar a todos los objetos de la escena", &rs.normalsAllObjects);
+
+		if (changed)
+		{
+			if (vertexNormals && faceNormals) rs.normals = NormalsMode::Both;
+			else if (vertexNormals) rs.normals = NormalsMode::Vertex;
+			else if (faceNormals) rs.normals = NormalsMode::Face;
+			else rs.normals = NormalsMode::None;
+
+			render->SetSettings(rs);
+		}
+	}
+
+	ImGui::PopID();
+}
+
+void ModuleUI::DrawMaterialInspector(GameObject* selected)
+{
+	MaterialComponent* material = selected->GetComponent<MaterialComponent>();
+	if (material == nullptr) return;
+	if (!ImGui::CollapsingHeader("Texture & Material", ImGuiTreeNodeFlags_DefaultOpen)) return;
+
+	ResourceManager* resources = Engine::GetInstance().resources.get();
+	ImGui::PushID("MaterialComponent");
+
+	bool enabled = material->IsActive();
+	if (ImGui::Checkbox("Activo", &enabled))
+	{
+		if (enabled) material->Enable();
+		else material->Disable();
+	}
+	ImGui::SameLine();
+	if (ImGui::SmallButton("Quitar componente"))
+	{
+		selected->RemoveComponent(COMPONENT_MATERIAL);
+		ImGui::PopID();
+		return;
+	}
+
+	glm::vec4 color = material->GetColor();
+	if (ImGui::ColorEdit4("Color Base (Alpha)", glm::value_ptr(color), ImGuiColorEditFlags_PickerHueWheel))
+	{
+		material->SetColor(color);
+	}
+
+	// ----- Selector de textura: combo con todas las texturas importadas + drag & drop -----
+	const ResourceTexture* texture = material->GetTexture();
+	std::string preview = texture ? texture->GetName() : (material->IsTextureMissing() ? std::string("(Missing)") : std::string("(Ninguna)"));
+	if (ImGui::BeginCombo("Textura", preview.c_str(), ImGuiComboFlags_HeightLarge))
+	{
+		if (ImGui::Selectable("(Ninguna)", material->GetTextureUID() == INVALID_UID))
+		{
+			material->SetTexture(INVALID_UID);
+		}
+		if (resources)
+		{
+			for (const Resource* resource : resources->GetResourcesOfType(ResourceType::Texture))
+			{
+				ImGui::PushID(resource);
+				const std::string label = resource->GetName() + "  [" + FileSystem::GetParentPath(resource->GetAssetPath()) + "]";
+				if (ImGui::Selectable(label.c_str(), resource->GetUID() == material->GetTextureUID()))
+				{
+					material->SetTexture(resource->GetUID());
+					material->SetUseTexture(true);
+				}
+				ImGui::PopID();
+			}
+		}
+		ImGui::EndCombo();
+	}
+	if (ImGui::BeginDragDropTarget())
+	{
+		if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(EditorDragDrop::ASSET_TEXTURE))
+		{
+			const EditorDragDrop::AssetPayload asset = EditorDragDrop::ReadAssetPayload(payload->Data, payload->DataSize);
+			material->SetTexture(asset.uid);
+			material->SetUseTexture(true);
+		}
+		ImGui::EndDragDropTarget();
+	}
+	ImGui::SetItemTooltip("Elige una textura o arrastra aqui una textura desde la ventana Assets");
+
+	bool usingTexture = material->GetUseTexture();
+	if (ImGui::Checkbox("Usar Textura Difusa", &usingTexture))
+	{
+		material->SetUseTexture(usingTexture);
+	}
+
+	bool usingChecker = material->GetUseCheckerboard();
+	if (ImGui::Checkbox("Textura Checkerboard (Blanco/Negro)", &usingChecker))
+	{
+		material->SetUseCheckerboard(usingChecker);
+	}
+
+	ImGui::Spacing();
+	ImGui::SeparatorText("Datos de Textura");
+	if (texture)
+	{
+		ImGui::BulletText("Asset: %s", texture->GetAssetPath().c_str());
+		ImGui::BulletText("UID: %llu  |  Referencias: %u", (unsigned long long)texture->GetUID(), texture->GetReferenceCount());
+		ImGui::BulletText("Tamaño: %d x %d px", texture->GetWidth(), texture->GetHeight());
+		ImGui::BulletText("OpenGL Texture ID: %u", texture->GetGLID());
+	}
+	else if (material->IsTextureMissing())
+	{
+		ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "La textura asignada ya no existe (se ve la textura 'missing')");
+	}
+	else
+	{
+		ImGui::TextDisabled("Sin textura difusa asignada (arrastra una desde Assets).");
+	}
+
+	unsigned int activeId = material->GetActiveTextureID();
+	if (activeId != 0)
+	{
+		ImGui::Spacing();
+		ImGui::TextDisabled("Vista previa activa:");
+		ImGui::Image((ImTextureID)(intptr_t)activeId, ImVec2(64, 64), ImVec2(0, 1), ImVec2(1, 0));
+	}
+
+	ImGui::PopID();
+}
+
+void ModuleUI::DrawCameraInspector(GameObject* selected)
+{
+	CameraComponent* cam = selected->GetComponent<CameraComponent>();
+	if (cam == nullptr) return;
+	if (!ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen)) return;
+
+	Scene* scene = Engine::GetInstance().scene.get();
+	ImGui::PushID("CameraComponent");
+
+	bool enabled = cam->IsActive();
+	if (ImGui::Checkbox("Activo", &enabled))
+	{
+		if (enabled) cam->Enable();
+		else cam->Disable();
+	}
+	ImGui::SameLine();
+	if (ImGui::SmallButton("Quitar componente"))
+	{
+		if (scene && scene->GetGameCameraObject() == selected) scene->SetGameCamera(nullptr);
+		selected->RemoveComponent(COMPONENT_CAMERA);
+		ImGui::PopID();
+		return;
+	}
+
+	// Main Camera = la que dibuja la ventana Game y hace el frustum culling
+	const bool isMain = scene && scene->GetGameCameraObject() == selected;
+	if (isMain)
+	{
+		ImGui::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "Main Camera (vista Game)");
+	}
+	else if (scene && ImGui::Button("Usar como Main Camera"))
+	{
+		scene->SetGameCamera(selected);
+	}
+
+	ImGui::SliderFloat("FOV (Grados)", &cam->fov, 10.0f, 120.0f, "%.1f");
+	ImGui::DragFloat("Near Plane", &cam->nearPlane, 0.01f, 0.01f, 10.0f, "%.2f");
+	ImGui::DragFloat("Far Plane", &cam->farPlane, 1.0f, 1.0f, 5000.0f, "%.1f");
+	if (cam->farPlane <= cam->nearPlane) cam->farPlane = cam->nearPlane + 0.1f;
+
+	ImGui::Checkbox("Frustum Culling", &cam->frustumCulling);
+	ImGui::SetItemTooltip("Si esta activo, la vista Game solo dibuja los objetos cuya AABB esta dentro del frustum");
+
+	ImGui::PopID();
+}
+
+void ModuleUI::DrawAddComponentButton(GameObject* selected)
+{
+	const float width = ImGui::GetContentRegionAvail().x;
+	if (ImGui::Button("Add Component", ImVec2(width, 0.0f)))
+	{
+		ImGui::OpenPopup("AddComponentPopup");
+	}
+
+	if (ImGui::BeginPopup("AddComponentPopup"))
+	{
+		const bool hasMesh = selected->GetComponent<MeshComponent>() != nullptr;
+		const bool hasMaterial = selected->GetComponent<MaterialComponent>() != nullptr;
+		const bool hasCamera = selected->GetComponent<CameraComponent>() != nullptr;
+
+		if (ImGui::MenuItem("Mesh", nullptr, false, !hasMesh))
+		{
+			selected->AddComponent(std::make_unique<MeshComponent>(selected));
+		}
+		if (ImGui::MenuItem("Material", nullptr, false, !hasMaterial))
+		{
+			selected->AddComponent(std::make_unique<MaterialComponent>(selected));
+		}
+		if (ImGui::MenuItem("Camera", nullptr, false, !hasCamera))
+		{
+			selected->AddComponent(std::make_unique<CameraComponent>(selected));
+			Scene* scene = Engine::GetInstance().scene.get();
+			if (scene && scene->GetGameCameraObject() == nullptr) scene->SetGameCamera(selected);
+		}
+		ImGui::EndPopup();
+	}
 }
 
 bool ModuleUI::PostUpdate()
@@ -1422,6 +2021,46 @@ void ModuleUI::DrawConfigurationPanel()
 					rnd->SetBackgroundColor(newBg);
 				}
 
+				// ---------------- Frustum culling, octree y gizmos ----------------
+				ImGui::Spacing();
+				ImGui::SeparatorText("Frustum Culling y Octree");
+				{
+					RenderSettings cullingSettings = rnd->GetSettings();
+					bool cullingChanged = false;
+					cullingChanged |= ImGui::Checkbox("Culling en la vista Scene (camara del editor)", &cullingSettings.editorFrustumCulling);
+					cullingChanged |= ImGui::Checkbox("Vista previa del culling de la Main Camera", &cullingSettings.cullingPreview);
+					cullingChanged |= ImGui::Checkbox("Dibujar AABB de todas las mallas (verde = visible, rojo = descartada)", &cullingSettings.showAABBs);
+					cullingChanged |= ImGui::Checkbox("Dibujar AABB del seleccionado", &cullingSettings.showSelectedAABB);
+					cullingChanged |= ImGui::Checkbox("Dibujar frustum de la Main Camera", &cullingSettings.showCameraFrustum);
+					cullingChanged |= ImGui::Checkbox("Dibujar nodos del octree", &cullingSettings.showOctree);
+					cullingChanged |= ImGui::Checkbox("Dibujar rayo del mouse picking", &cullingSettings.showPickRay);
+					if (cullingChanged) rnd->SetSettings(cullingSettings);
+
+					Scene* cullingScene = Engine::GetInstance().scene.get();
+					if (cullingScene)
+					{
+						bool useOctree = cullingScene->IsUsingOctree();
+						if (ImGui::Checkbox("Usar octree (si se desactiva se prueban todos los objetos)", &useOctree))
+						{
+							cullingScene->SetUseOctree(useOctree);
+						}
+
+						const Octree& octree = cullingScene->GetOctree();
+						ImGui::BulletText("Octree: %d nodos, profundidad %d, %zu objetos (reconstruido %d veces)",
+							octree.GetNodeCount(), octree.GetDepth(), octree.GetObjectCount(), cullingScene->GetOctreeRebuildCount());
+
+						const RenderStats& renderStats = rnd->GetStats();
+						ImGui::BulletText("Vista Scene: %d / %d dibujados (nodos visitados %d, AABB probadas %d)",
+							renderStats.sceneDrawn, renderStats.sceneCandidates, renderStats.sceneQuery.nodesVisited, renderStats.sceneQuery.objectsTested);
+						ImGui::BulletText("Vista Game:  %d / %d dibujados (nodos visitados %d, AABB probadas %d)",
+							renderStats.gameDrawn, renderStats.gameCandidates, renderStats.gameQuery.nodesVisited, renderStats.gameQuery.objectsTested);
+
+						const PickStats& pick = cullingScene->GetLastPickStats();
+						ImGui::BulletText("Ultimo picking: %d candidatos, %d mallas, %d triangulos probados (%.3f ms)",
+							pick.candidates, pick.meshesTested, pick.trianglesTested, pick.milliseconds);
+					}
+				}
+
 				ImGui::Spacing();
 				ImGui::SeparatorText("Estado del Framebuffer (FBO)");
 				ImGui::BulletText("Resolución Viewport: %d x %d px", rnd->GetViewportWidth(), rnd->GetViewportHeight());
@@ -1439,7 +2078,7 @@ void ModuleUI::DrawConfigurationPanel()
 			if (ImGui::BeginTabItem("Camera"))
 			{
 				Scene* scene = Engine::GetInstance().scene.get();
-				GameObject* camObj = scene ? scene->GetMainCameraObject() : nullptr;
+				GameObject* camObj = scene ? scene->GetEditorCameraObject() : nullptr;
 				CameraComponent* cam = camObj ? camObj->GetComponent<CameraComponent>() : nullptr;
 				TransformComponent* camTrans = camObj ? camObj->GetComponent<TransformComponent>() : nullptr;
 
@@ -1448,7 +2087,8 @@ void ModuleUI::DrawConfigurationPanel()
 					ImGui::SeparatorText("Parámetros de Proyección");
 					ImGui::SliderFloat("Campo de Visión (FOV)", &cam->fov, 10.0f, 120.0f, "%.1f deg");
 					ImGui::DragFloat("Plano Cercano (Near)", &cam->nearPlane, 0.01f, 0.01f, 10.0f, "%.2f");
-					ImGui::DragFloat("Plano Lejano (Far)", &cam->farPlane, 1.0f, 10.0f, 2000.0f, "%.1f");
+					ImGui::DragFloat("Plano Lejano (Far)", &cam->farPlane, 1.0f, 10.0f, 5000.0f, "%.1f");
+					ImGui::Checkbox("Frustum Culling (vista Scene)", &cam->frustumCulling);
 
 					ImGui::Spacing();
 					ImGui::SeparatorText("Navegación y Control");
@@ -1553,49 +2193,24 @@ void ModuleUI::DrawConfigurationPanel()
 			if (ImGui::BeginTabItem("Textures"))
 			{
 				const auto& hw = Engine::GetInstance().GetHardwareMetrics();
-				TextureManager* texMgr = Engine::GetInstance().textures.get();
+				const ResourceManager* resourceManager = Engine::GetInstance().resources.get();
 
-				ImGui::SeparatorText("Subsistema DevIL & Caché GPU");
+				ImGui::SeparatorText("Subsistema DevIL");
 				ImGui::BulletText("Librería de Carga: Developer's Image Library (DevIL v%s)", hw.devilVersion.c_str());
 				ImGui::BulletText("Formatos Compatibles: PNG, JPG, JPEG, DDS, TGA, BMP");
-				if (texMgr)
-				{
-					ImGui::BulletText("Texturas en Caché VRAM: %zu (+1 Checkerboard procedural)", texMgr->GetLoadedCount());
-				}
+				ImGui::BulletText("Formato propio en Library: .tex (cabecera + pixeles RGB/RGBA listos para OpenGL)");
 
-				if (texMgr)
+				if (resourceManager)
 				{
+					const std::vector<const Resource*> textures = resourceManager->GetResourcesOfType(ResourceType::Texture);
 					ImGui::Spacing();
-					ImGui::SeparatorText("Parámetros de Muestreo OpenGL (Tiempo Real)");
-
-					TextureSettings ts = texMgr->GetSettings();
-					bool texChanged = false;
-
-					static const char* minFilters[] = {
-						"GL_LINEAR_MIPMAP_LINEAR (Trilineal)",
-						"GL_LINEAR (Bilineal)",
-						"GL_NEAREST (Vecino más cercano)"
-					};
-					texChanged |= ImGui::Combo("Filtro Minificación", &ts.minFilter, minFilters, IM_ARRAYSIZE(minFilters));
-
-					static const char* magFilters[] = {
-						"GL_LINEAR (Suave)",
-						"GL_NEAREST (Pixelado)"
-					};
-					texChanged |= ImGui::Combo("Filtro Magnificación", &ts.magFilter, magFilters, IM_ARRAYSIZE(magFilters));
-
-					static const char* wrapModes[] = {
-						"GL_REPEAT (Repetición)",
-						"GL_CLAMP_TO_EDGE (Abrazar bordes)",
-						"GL_MIRRORED_REPEAT (Espejado)"
-					};
-					texChanged |= ImGui::Combo("Modo Wrap (S/T)", &ts.wrapMode, wrapModes, IM_ARRAYSIZE(wrapModes));
-
-					if (texChanged)
-					{
-						texMgr->SetSettings(ts);
-					}
+					ImGui::SeparatorText("Texturas (recursos)");
+					ImGui::BulletText("Texturas importadas: %zu", textures.size());
+					ImGui::BulletText("Texturas en memoria (VRAM): %zu (+2 procedurales: checkerboard y missing)", resourceManager->GetLoadedCount(ResourceType::Texture));
 				}
+
+				ImGui::Spacing();
+				ImGui::TextWrapped("Los filtros, el wrapping, el volteo y el tamano maximo se configuran por textura: selecciona la textura en la ventana Assets y cambia sus opciones de importacion en el Inspector.");
 
 				ImGui::EndTabItem();
 			}
@@ -1720,7 +2335,7 @@ void ModuleUI::DrawAboutPanel()
 
 		ImGui::TextColored(ImVec4(0.35f, 0.8f, 1.0f, 1.0f), "MotorVideojuego 3D Engine");
 		ImGui::SameLine();
-		ImGui::TextDisabled("v0.0.1");
+		ImGui::TextDisabled("v0.2 (A2 - Editor del motor)");
 		ImGui::TextWrapped("Motor gráfico 3D educativo desarrollado en c++ con arquitectura modular de Entidades/Componentes y editor integrado.");
 
 		ImGui::Spacing();
@@ -1738,6 +2353,7 @@ void ModuleUI::DrawAboutPanel()
 		ImGui::BulletText("DevIL v%s (Carga de Texturas)", hw.devilVersion.c_str());
 		ImGui::BulletText("GLM (Matemáticas 3D, Matrices y Transformaciones)");
 		ImGui::BulletText("Tracy Profiler (Profiling y Rendimiento)");
+		ImGui::BulletText("nlohmann/json (Escenas, .meta y modelos en JSON)");
 
 		ImGui::Spacing();
 		ImGui::SeparatorText("Licencia MIT");

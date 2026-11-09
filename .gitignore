@@ -6,6 +6,11 @@
 # Class .gitignore
 build
 
+# Carpeta Library del motor: se regenera sola a partir de Assets/ + los ficheros .meta
+# (los .meta SI deben subirse al repositorio: guardan los UID y las opciones de importacion)
+Library/
+imgui_layout_a2.ini
+
 # User-specific files
 *.rsuser
 *.suo
@@ -430,3 +435,7 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# Los .meta de los assets del motor SI se suben al repositorio (guardan los UID y las opciones
+# de importacion). La plantilla de Visual Studio de arriba ignora *.meta, asi que lo revertimos aqui.
+!Assets/**/*.meta
