@@ -6,6 +6,7 @@
 // =====================================================================================
 #include "ModuleUI.h"
 #include "EditorDragDrop.h"
+#include "EditorIcons.h"
 #include "../Engine.h"
 #include "../Scene/Scene.h"
 #include "../Scene/GameObjects/GameObject.h"
@@ -35,27 +36,30 @@ namespace
 		return AssetKind::Other;
 	}
 
-	const char* KindTag(AssetKind kind)
+	// Icono (glifo de Font Awesome) de cada tipo de elemento del explorador:
+	//   carpeta | textura (.png, .tga, .jpg...) | modelo 3D (.fbx...) | escena (.scene) | otro fichero
+	const char* KindIcon(AssetKind kind)
 	{
 		switch (kind)
 		{
-		case AssetKind::Folder:  return "[DIR]";
-		case AssetKind::Texture: return "[TEX]";
-		case AssetKind::Model:   return "[MOD]";
-		case AssetKind::Scene:   return "[SCN]";
-		default:                 return "[ ? ]";
+		case AssetKind::Folder:  return ICON_FA_FOLDER;
+		case AssetKind::Texture: return ICON_FA_IMAGE;
+		case AssetKind::Model:   return ICON_FA_CUBE;
+		case AssetKind::Scene:   return ICON_FA_CLAPPERBOARD;
+		default:                 return ICON_FA_FILE;
 		}
 	}
 
+	// Color del icono: el nombre del fichero se pinta siempre con el color de texto normal
 	ImVec4 KindColor(AssetKind kind)
 	{
 		switch (kind)
 		{
-		case AssetKind::Folder:  return ImVec4(1.0f, 0.85f, 0.45f, 1.0f);
-		case AssetKind::Texture: return ImVec4(0.55f, 0.85f, 1.0f, 1.0f);
-		case AssetKind::Model:   return ImVec4(0.6f, 1.0f, 0.6f, 1.0f);
-		case AssetKind::Scene:   return ImVec4(1.0f, 0.6f, 0.9f, 1.0f);
-		default:                 return ImVec4(0.6f, 0.6f, 0.6f, 1.0f);
+		case AssetKind::Folder:  return EditorPalette::ICON_FOLDER;
+		case AssetKind::Texture: return EditorPalette::ICON_TEXTURE;
+		case AssetKind::Model:   return EditorPalette::ICON_MODEL;
+		case AssetKind::Scene:   return EditorPalette::ICON_SCENE;
+		default:                 return EditorPalette::ICON_NEUTRAL;
 		}
 	}
 
@@ -239,22 +243,26 @@ void ModuleUI::DrawAssetsPanel()
 
 		// --------------------------- Barra superior -----------------------------
 		ImGui::BeginDisabled(assetsCurrentFolder == FileSystem::ASSETS_DIR);
-		if (ImGui::Button("<"))
+		if (ImGui::Button(ICON_FA_ARROW_UP "##AssetsParentFolder"))
 		{
 			assetsCurrentFolder = FileSystem::GetParentPath(assetsCurrentFolder);
 		}
 		ImGui::EndDisabled();
 		ImGui::SetItemTooltip("Carpeta superior");
 		ImGui::SameLine();
+		ImGui::AlignTextToFramePadding();
+		ImGui::TextColored(EditorPalette::ICON_FOLDER, ICON_FA_FOLDER_OPEN);
+		ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
 		ImGui::TextUnformatted(assetsCurrentFolder.c_str());
 		ImGui::SameLine();
-		if (ImGui::Button("Refresh"))
+		// "###" separa el texto visible (con icono) del ID del boton
+		if (ImGui::Button(ICON_FA_ARROWS_ROTATE "  Refresh###AssetsRefresh"))
 		{
 			QueueAssetOperation(AssetOperation::Refresh, std::string());
 		}
 		ImGui::SetItemTooltip("Vuelve a revisar la carpeta Assets: importa lo nuevo y limpia lo borrado");
 		ImGui::SameLine();
-		if (ImGui::Button("Nueva carpeta"))
+		if (ImGui::Button(ICON_FA_FOLDER_PLUS "  Nueva carpeta###AssetsNewFolder"))
 		{
 			openNewFolderPopup = true;
 		}
@@ -294,8 +302,13 @@ void ModuleUI::DrawAssetsFolderTree(const std::string& folder)
 	if (!hasSubfolders) flags |= ImGuiTreeNodeFlags_Leaf;
 	if (folder == assetsCurrentFolder) flags |= ImGuiTreeNodeFlags_Selected;
 
-	// La ruta completa sirve de ID unico del nodo
-	const bool open = ImGui::TreeNodeEx(folder.c_str(), flags, "%s", FileSystem::GetFileName(folder).c_str());
+	// La ruta completa sirve de ID unico del nodo. El nodo se crea sin etiqueta y encima se pinta
+	// "icono + nombre" en dos colores; la carpeta cuyo contenido se esta viendo usa el icono de carpeta abierta.
+	const ImVec2 nodePos = ImGui::GetCursorScreenPos();
+	const bool open = ImGui::TreeNodeEx(folder.c_str(), flags, "%s", "");
+	EditorIcons::DrawIconLabel(ImVec2(nodePos.x + ImGui::GetTreeNodeToLabelSpacing(), nodePos.y),
+		(folder == assetsCurrentFolder) ? ICON_FA_FOLDER_OPEN : ICON_FA_FOLDER, EditorPalette::ICON_FOLDER,
+		FileSystem::GetFileName(folder).c_str(), ImGui::GetStyleColorVec4(ImGuiCol_Text));
 	if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen())
 	{
 		assetsCurrentFolder = folder;
@@ -342,24 +355,31 @@ void ModuleUI::DrawAssetEntry(const FileSystem::DirectoryEntry& entry)
 	ResourceManager* resources = Engine::GetInstance().resources.get();
 	const AssetKind kind = GetAssetKind(entry);
 	const bool isSelected = (selectedAssetPath == entry.path);
-	const std::string label = std::string(KindTag(kind)) + "  " + entry.name;
+	const ImVec4 textColor = ImGui::GetStyleColorVec4(ImGuiCol_Text);
 
 	ImGui::PushID(entry.path.c_str());
 
+	// El widget de la fila (Selectable o TreeNode) se crea SIN etiqueta y despues se pinta encima
+	// "icono + nombre": el icono con el color de su tipo y el nombre con el color de texto normal.
+	// La posicion se lee antes de crear el widget (ver EditorIcons::DrawIconLabel).
+	ImVec2 labelPos = ImGui::GetCursorScreenPos();
+
 	// Los modelos se pueden desplegar para ver (y arrastrar) cada una de sus mallas
 	bool modelOpen = false;
-	ImGui::PushStyleColor(ImGuiCol_Text, KindColor(kind));
 	if (kind == AssetKind::Model)
 	{
 		ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
 		if (isSelected) flags |= ImGuiTreeNodeFlags_Selected;
-		modelOpen = ImGui::TreeNodeEx("##model", flags, "%s", label.c_str());
+		modelOpen = ImGui::TreeNodeEx("##model", flags, "%s", "");
 	}
 	else
 	{
-		ImGui::Selectable(label.c_str(), isSelected, ImGuiSelectableFlags_AllowDoubleClick);
+		ImGui::Selectable("##entry", isSelected, ImGuiSelectableFlags_AllowDoubleClick);
 	}
-	ImGui::PopStyleColor();
+	// Un nodo de arbol deja a la izquierda el hueco de su flecha. Se deja ese mismo hueco tambien en
+	// las filas normales, asi todos los iconos de la lista quedan alineados en la misma columna.
+	labelPos.x += ImGui::GetTreeNodeToLabelSpacing();
+	EditorIcons::DrawIconLabel(labelPos, KindIcon(kind), KindColor(kind), entry.name.c_str(), textColor);
 
 	// Clic: seleccionar (el Inspector muestra el asset). Doble clic: abrir / usar.
 	if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen())
@@ -382,7 +402,10 @@ void ModuleUI::DrawAssetEntry(const FileSystem::DirectoryEntry& entry)
 	{
 		const EditorDragDrop::AssetPayload payload = EditorDragDrop::MakeAssetPayload(assetUID, entry.path);
 		ImGui::SetDragDropPayload(payloadType, &payload, sizeof(payload));
-		ImGui::Text("%s %s", KindTag(kind), entry.name.c_str());
+		// Vista previa que acompana al raton mientras se arrastra: icono del tipo + nombre
+		ImGui::TextColored(KindColor(kind), "%s", KindIcon(kind));
+		ImGui::SameLine();
+		ImGui::TextUnformatted(entry.name.c_str());
 		ImGui::EndDragDropSource();
 	}
 
@@ -422,15 +445,19 @@ void ModuleUI::DrawAssetEntry(const FileSystem::DirectoryEntry& entry)
 			if (mesh == nullptr) continue;
 
 			ImGui::PushID(static_cast<int>(i));
-			const std::string meshLabel = "[MSH]  " + mesh->GetName();
-			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.75f, 0.95f, 0.75f, 1.0f));
-			ImGui::Selectable(meshLabel.c_str(), false);
-			ImGui::PopStyleColor();
+			// Misma tecnica que en las filas de assets: Selectable sin etiqueta + icono y nombre pintados encima
+			// (con el mismo hueco a la izquierda, para que la malla quede sangrada respecto a su modelo)
+			ImVec2 meshLabelPos = ImGui::GetCursorScreenPos();
+			meshLabelPos.x += ImGui::GetTreeNodeToLabelSpacing();
+			ImGui::Selectable("##mesh", false);
+			EditorIcons::DrawIconLabel(meshLabelPos, ICON_FA_DRAW_POLYGON, EditorPalette::ICON_MESH, mesh->GetName().c_str(), textColor);
 			if (ImGui::BeginDragDropSource())
 			{
 				const EditorDragDrop::AssetPayload payload = EditorDragDrop::MakeAssetPayload(mesh->GetUID(), entry.path);
 				ImGui::SetDragDropPayload(EditorDragDrop::ASSET_MESH, &payload, sizeof(payload));
-				ImGui::Text("[MSH] %s", mesh->GetName().c_str());
+				ImGui::TextColored(EditorPalette::ICON_MESH, ICON_FA_DRAW_POLYGON);
+				ImGui::SameLine();
+				ImGui::TextUnformatted(mesh->GetName().c_str());
 				ImGui::EndDragDropSource();
 			}
 			ImGui::SetItemTooltip("Malla UID %llu | Referencias: %u | En memoria: %s\nArrastrala al campo Malla del Inspector o a la escena",

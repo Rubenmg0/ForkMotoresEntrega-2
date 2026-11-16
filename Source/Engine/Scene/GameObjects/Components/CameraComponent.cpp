@@ -69,8 +69,13 @@ void CameraComponent::Update(float dt)
     bool lmbDown = (input->GetMouseButton(SDL_BUTTON_LEFT) == KEY_DOWN);
     bool lmbHeld = (lmbDown || input->GetMouseButton(SDL_BUTTON_LEFT) == KEY_REPEAT);
 
+    // Prioridad del gizmo de transformacion sobre la camara:
+    //  - Mientras se arrastra el gizmo, ningun clic empieza a mover la camara.
+    //  - Si el raton esta encima del gizmo, Alt + clic izquierdo lo recibe el gizmo (no se orbita).
+    const bool orbitClick = altHeld && lmbDown && selectedObject != nullptr && !gizmoHovered;
+
     // Solo iniciamos el control de cámara si el clic comienza dentro del viewport de Scene
-    if ((rmbDown || (altHeld && lmbDown && selectedObject != nullptr)) && viewportHovered && !isControllingCamera)
+    if ((rmbDown || orbitClick) && viewportHovered && !isControllingCamera && !gizmoInUse)
     {
         isControllingCamera = true;
     }
@@ -108,8 +113,9 @@ void CameraComponent::Update(float dt)
         currentSpeed *= 2.0f;
     }
 
-    // Rueda del ratón: acercar / alejar la camara en la direccion en la que mira (como Unity)
-    if (viewportHovered || activeControl)
+    // Rueda del ratón: acercar / alejar la camara en la direccion en la que mira (como Unity).
+    // No se aplica mientras se arrastra el gizmo: moveria la camara a mitad de la manipulacion.
+    if ((viewportHovered || activeControl) && !gizmoInUse)
     {
         float scroll = input->GetMouseScrollDelta();
         if (scroll != 0.0f)
@@ -157,7 +163,7 @@ void CameraComponent::Update(float dt)
     }
 
     // Tecla F: Focus en el objeto seleccionado (cuando el viewport está activo)
-    if (viewportHovered && input->GetKeyDown(SDL_SCANCODE_F) && selectedObject)
+    if (viewportHovered && !gizmoInUse && input->GetKeyDown(SDL_SCANCODE_F) && selectedObject)
     {
         FocusOnObject(selectedObject);
     }

@@ -17,6 +17,7 @@
 #include "../ResourceManagement/ResourceTexture.h"
 #include "../ResourceManagement/Importers/ImporterManager.h"
 #include "EditorDragDrop.h"
+#include "EditorIcons.h"
 
 #include <glm/gtc/type_ptr.hpp>
 
@@ -24,6 +25,7 @@
 #include <imgui_internal.h>
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_opengl3.h>
+#include <ImGuizmo.h> // gizmos 3D (siempre despues de imgui.h)
 
 #include <SDL3/SDL.h>
 
@@ -45,6 +47,55 @@ namespace
 	constexpr const char* REPO_URL_DOCS     = "https://github.com/JanCorredor/MotorVideojuego";
 	constexpr const char* REPO_URL_ISSUES   = "https://github.com/JanCorredor/MotorVideojuego/issues";
 	constexpr const char* REPO_URL_RELEASES = "https://github.com/JanCorredor/MotorVideojuego/releases";
+
+	// ----------------------------- Fuentes del editor -----------------------------
+	// Ficheros dentro de FileSystem::EDITOR_FONTS_DIR
+	constexpr const char* EDITOR_TEXT_FONT_FILE = "Roboto-Medium.ttf";
+	constexpr const char* EDITOR_ICON_FONT_FILE = FONT_ICON_FILE_NAME_FAS; // "fa-solid-900.ttf"
+	constexpr float EDITOR_FONT_SIZE = 16.0f; // px de la fuente de texto
+	// Los glifos de Font Awesome ocupan todo el alto de la fuente (no dejan hueco como las letras), asi
+	// que al mismo tamano se ven mas grandes que el texto. A 13 px quedan centrados con las mayusculas.
+	constexpr float EDITOR_ICON_SIZE = 13.0f;
+
+	// ----------------------------- Gizmo de transformacion -----------------------------
+	// Ajuste a rejilla manteniendo Ctrl mientras se arrastra
+	constexpr float GIZMO_SNAP_TRANSLATE = 0.5f; // unidades
+	constexpr float GIZMO_SNAP_ROTATE = 15.0f;   // grados
+	constexpr float GIZMO_SNAP_SCALE = 0.1f;
+
+	// Cabecera plegable de un componente del Inspector. ImGuiCol_Header es tambien el color de las
+	// filas seleccionadas (azul de acento), asi que aqui se sustituye por un gris neutro: el azul
+	// queda reservado para "esto esta seleccionado".
+	bool ComponentHeader(const char* label, ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_DefaultOpen)
+	{
+		ImGui::PushStyleColor(ImGuiCol_Header, EditorPalette::RAISED);
+		ImGui::PushStyleColor(ImGuiCol_HeaderHovered, EditorPalette::RAISED_HOVERED);
+		ImGui::PushStyleColor(ImGuiCol_HeaderActive, EditorPalette::RAISED_ACTIVE);
+		const bool open = ImGui::CollapsingHeader(label, flags);
+		ImGui::PopStyleColor(3);
+		return open;
+	}
+
+	// Boton con tres colores propios (normal / hover / pulsado) en lugar de los del tema
+	bool ColoredButton(const char* label, const ImVec2& size, const ImVec4& color, const ImVec4& hovered, const ImVec4& active)
+	{
+		ImGui::PushStyleColor(ImGuiCol_Button, color);
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hovered);
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive, active);
+		const bool pressed = ImGui::Button(label, size);
+		ImGui::PopStyleColor(3);
+		return pressed;
+	}
+
+	// Tooltip del ultimo widget que tambien aparece si esta desactivado (SetItemTooltip no lo hace).
+	// Un boton que solo tiene icono necesita poder explicarse siempre, este activo o no.
+	void IconTooltip(const char* text)
+	{
+		if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip | ImGuiHoveredFlags_AllowWhenDisabled))
+		{
+			ImGui::SetTooltip("%s", text);
+		}
+	}
 
 	// Helper para alinear etiquetas y campos vec3 uniformemente en tablas
 	bool DrawVec3Control(const char* label, glm::vec3& values, float speed = 0.1f)
@@ -116,16 +167,13 @@ bool ModuleUI::Start()
 	// nuevas (Assets, Resources) ya acopladas, en vez de heredar el layout antiguo
 	io.IniFilename = "imgui_layout_a2.ini";
 
-	// Setup Dear ImGui style
-	ImGui::StyleColorsDark();
+	// Las ventanas solo se mueven arrastrando su barra de titulo. Sin esto, arrastrar dentro de una
+	// vista Scene flotante (un gizmo, Alt + clic para orbitar...) moveria tambien la ventana.
+	io.ConfigWindowsMoveFromTitleBarOnly = true;
 
-	// When viewports are enabled we tweak WindowRounding/WindowBg so platform windows can look identical to regular ones.
-	ImGuiStyle& style = ImGui::GetStyle();
-	if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
-	{
-		style.WindowRounding = 0.0f;
-		style.Colors[ImGuiCol_WindowBg].w = 1.0f;
-	}
+	// Aspecto del editor: fuente de texto + iconos y tema oscuro propio
+	LoadEditorFonts();
+	SetupEditorStyle();
 
 	// Setup Platform/Renderer backends
 	ImGui_ImplSDL3_InitForOpenGL(Engine::GetInstance().window->GetWindow(), Engine::GetInstance().window->GetGLContext());
@@ -138,6 +186,257 @@ bool ModuleUI::Start()
 	strncpy_s(windowTitleBuffer, sizeof(windowTitleBuffer), initTitle.c_str(), _TRUNCATE);
 
 	return true;
+}
+
+// =====================================================================================
+// FUENTES: texto (.ttf) + iconos (Font Awesome 6) fusionados en una unica ImFont
+// =====================================================================================
+void ModuleUI::LoadEditorFonts()
+{
+	ImGuiIO& io = ImGui::GetIO();
+
+	// ---------------------------------------------------------------------------------
+	// 1) Fuente de texto principal: sustituye a ProggyClean (la fuente pixelada por defecto)
+	// ---------------------------------------------------------------------------------
+	const std::string textFontPath = FileSystem::Join(FileSystem::EDITOR_FONTS_DIR, EDITOR_TEXT_FONT_FILE);
+	ImFont* textFont = nullptr;
+
+	// Se comprueba antes que el fichero existe: AddFontFromFileTTF lanza un assert si no puede abrirlo
+	if (FileSystem::Exists(textFontPath))
+	{
+		ImFontConfig textConfig;
+		// Oversampling: el glifo se rasteriza a mas resolucion de la necesaria y despues se reduce.
+		//  - Horizontal x3: ImGui coloca cada letra en posiciones sub-pixel en X; con mas muestras
+		//    el espaciado entre letras es regular y los trazos verticales salen definidos.
+		//  - Vertical x1: en Y el texto siempre cae en pixeles enteros, asi que sobremuestrear solo
+		//    lo emborronaria. Con 1 las lineas horizontales (barra de la "e", la "t"...) quedan nitidas.
+		textConfig.OversampleH = 3;
+		textConfig.OversampleV = 1;
+		textConfig.PixelSnapH = false; // el avance sub-pixel es justo lo que aprovecha OversampleH
+		textFont = io.Fonts->AddFontFromFileTTF(FileSystem::ToDiskPath(textFontPath).c_str(), EDITOR_FONT_SIZE, &textConfig);
+	}
+
+	if (textFont != nullptr)
+	{
+		LOG("[ImGui] Fuente de texto cargada: '%s' (%.0f px)", textFontPath.c_str(), EDITOR_FONT_SIZE);
+	}
+	else
+	{
+		// Sin el .ttf el editor sigue funcionando con la fuente integrada en ImGui
+		LOG_WARNING("[ImGui] No se pudo cargar la fuente '%s'. Se usa la fuente por defecto de ImGui.", textFontPath.c_str());
+		textFont = io.Fonts->AddFontDefault();
+	}
+	io.FontDefault = textFont;
+
+	// ---------------------------------------------------------------------------------
+	// 2) Iconos: Font Awesome 6 fusionada DENTRO de la fuente anterior (MergeMode)
+	//    A partir de aqui los ICON_FA_* se pueden escribir en cualquier texto de ImGui.
+	// ---------------------------------------------------------------------------------
+	const std::string iconFontPath = FileSystem::Join(FileSystem::EDITOR_FONTS_DIR, EDITOR_ICON_FONT_FILE);
+	if (!FileSystem::Exists(iconFontPath))
+	{
+		LOG_ERROR("[ImGui] Falta la fuente de iconos '%s': los iconos del editor no se veran.", iconFontPath.c_str());
+		return;
+	}
+
+	// Rango de codigos Unicode que se toma de la fuente de iconos (zona de uso privado). ImGui guarda
+	// el puntero, no copia el array: por eso es 'static' (tiene que vivir tanto como el atlas).
+	static const ImWchar iconRanges[] = { ICON_MIN_FA, ICON_MAX_16_FA, 0 };
+
+	ImFontConfig iconConfig;
+	iconConfig.MergeMode = true;                      // anade sus glifos a la fuente anterior en vez de crear otra ImFont
+	iconConfig.PixelSnapH = true;                     // iconos alineados a pixeles enteros: bordes limpios
+	iconConfig.GlyphMinAdvanceX = EDITOR_ICON_SIZE;   // ancho minimo comun para que los iconos se alineen en columna
+	iconConfig.OversampleH = 2;
+	iconConfig.OversampleV = 1;
+	// Sin desplazamiento vertical: al fusionar, ImGui alinea las lineas base de las dos fuentes y con
+	// EDITOR_ICON_SIZE el centro del icono coincide con el centro de las mayusculas del texto.
+	iconConfig.GlyphOffset = ImVec2(0.0f, 0.0f);
+
+	if (io.Fonts->AddFontFromFileTTF(FileSystem::ToDiskPath(iconFontPath).c_str(), EDITOR_ICON_SIZE, &iconConfig, iconRanges) != nullptr)
+	{
+		LOG("[ImGui] Iconos Font Awesome 6 fusionados con la fuente de texto ('%s', %.0f px)", iconFontPath.c_str(), EDITOR_ICON_SIZE);
+	}
+	else
+	{
+		LOG_ERROR("[ImGui] No se pudo cargar la fuente de iconos '%s'", iconFontPath.c_str());
+	}
+}
+
+// =====================================================================================
+// TEMA: oscuro, plano y con un unico color de acento (estilo Unreal Engine 5 / Unity Dark)
+// =====================================================================================
+void ModuleUI::SetupEditorStyle()
+{
+	ImGuiIO& io = ImGui::GetIO();
+	ImGuiStyle& style = ImGui::GetStyle();
+
+	// Punto de partida: el tema oscuro de ImGui. Cualquier color que no se redefina aqui abajo
+	// (por ejemplo uno anadido en una version futura de ImGui) conserva un valor razonable.
+	ImGui::StyleColorsDark(&style);
+
+	// ---------------------------------------------------------------------------------
+	// Geometria: espaciados compactos y esquinas ligeramente redondeadas
+	// ---------------------------------------------------------------------------------
+	style.WindowPadding = ImVec2(10.0f, 10.0f);
+	style.FramePadding = ImVec2(8.0f, 4.0f);       // alto de boton / campo = fuente (16) + 2 * 4 = 24 px
+	style.CellPadding = ImVec2(6.0f, 4.0f);
+	style.ItemSpacing = ImVec2(8.0f, 6.0f);
+	style.ItemInnerSpacing = ImVec2(6.0f, 4.0f);
+	style.IndentSpacing = 18.0f;
+	style.ScrollbarSize = 13.0f;
+	style.GrabMinSize = 10.0f;
+
+	style.WindowRounding = 6.0f;
+	style.ChildRounding = 4.0f;
+	style.FrameRounding = 4.0f;
+	style.PopupRounding = 6.0f;
+	style.ScrollbarRounding = 8.0f;
+	style.GrabRounding = 3.0f;
+	style.TabRounding = 5.0f;
+
+	// Bordes: una linea fina separa ventanas y popups; botones y campos son planos (sin borde)
+	style.WindowBorderSize = 1.0f;
+	style.ChildBorderSize = 1.0f;
+	style.PopupBorderSize = 1.0f;
+	style.FrameBorderSize = 0.0f;
+	style.TabBorderSize = 0.0f;
+	style.TabBarBorderSize = 1.0f;
+	style.TabBarOverlineSize = 2.0f;               // linea de acento sobre la pestana activa
+	style.DockingSeparatorSize = 2.0f;
+	style.SeparatorTextBorderSize = 1.0f;
+
+	style.WindowMenuButtonPosition = ImGuiDir_None; // sin el triangulo de plegar en las barras de pestanas
+	style.TreeLinesFlags = ImGuiTreeNodeFlags_DrawLinesFull; // lineas guia padre -> hijos (Hierarchy, Assets)
+	style.TreeLinesSize = 1.0f;
+
+	// ---------------------------------------------------------------------------------
+	// Paleta: grises neutros con un punto frio. Cuanto mas "al fondo" esta una superficie, mas
+	// oscura es; lo interactivo es mas claro y solo lo seleccionado / activo usa el azul de acento.
+	// ---------------------------------------------------------------------------------
+	const ImVec4 bgDeepest = ImVec4(0.055f, 0.055f, 0.060f, 1.00f); // campos de texto, zona vacia del dock
+	const ImVec4 bgDark    = ImVec4(0.085f, 0.085f, 0.092f, 1.00f); // barras de titulo y de menu, pestanas inactivas
+	const ImVec4 bgPanel   = ImVec4(0.125f, 0.125f, 0.135f, 1.00f); // fondo de los paneles
+	const ImVec4 text      = ImVec4(0.900f, 0.905f, 0.915f, 1.00f); // contraste ~13:1 sobre bgPanel
+	const ImVec4 textDim   = ImVec4(0.520f, 0.530f, 0.550f, 1.00f);
+	const ImVec4 border    = ImVec4(0.000f, 0.000f, 0.000f, 0.55f);
+
+	const ImVec4& accent = EditorPalette::ACCENT;
+	const ImVec4& accentHovered = EditorPalette::ACCENT_HOVERED;
+	const ImVec4& accentActive = EditorPalette::ACCENT_ACTIVE;
+	// El mismo color con otra opacidad (para estados que se superponen al fondo)
+	const auto withAlpha = [](const ImVec4& color, float alpha) { return ImVec4(color.x, color.y, color.z, alpha); };
+
+	ImVec4* colors = style.Colors;
+
+	// Texto
+	colors[ImGuiCol_Text] = text;
+	colors[ImGuiCol_TextDisabled] = textDim;
+	colors[ImGuiCol_TextLink] = accentHovered;
+	colors[ImGuiCol_TextSelectedBg] = withAlpha(accent, 0.45f);
+	colors[ImGuiCol_InputTextCursor] = text;
+
+	// Fondos de ventanas y paneles
+	colors[ImGuiCol_WindowBg] = bgPanel;
+	colors[ImGuiCol_ChildBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.16f);       // los paneles hijos (lista de Assets, log) quedan hundidos
+	colors[ImGuiCol_PopupBg] = ImVec4(0.095f, 0.095f, 0.103f, 0.98f);
+	colors[ImGuiCol_Border] = border;
+	colors[ImGuiCol_BorderShadow] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+	colors[ImGuiCol_MenuBarBg] = bgDark;
+	colors[ImGuiCol_TitleBg] = bgDark;
+	colors[ImGuiCol_TitleBgActive] = bgDark;
+	colors[ImGuiCol_TitleBgCollapsed] = bgDark;
+	colors[ImGuiCol_DockingEmptyBg] = bgDeepest;
+	colors[ImGuiCol_DockingPreview] = withAlpha(accent, 0.55f);
+
+	// Campos (InputText, Drag, Slider, Checkbox, Combo): hundidos respecto al panel
+	colors[ImGuiCol_FrameBg] = bgDeepest;
+	colors[ImGuiCol_FrameBgHovered] = ImVec4(0.105f, 0.108f, 0.120f, 1.00f);
+	colors[ImGuiCol_FrameBgActive] = ImVec4(0.130f, 0.150f, 0.190f, 1.00f); // toque azul al editar
+	colors[ImGuiCol_CheckMark] = accentHovered;
+	colors[ImGuiCol_SliderGrab] = accent;
+	colors[ImGuiCol_SliderGrabActive] = accentHovered;
+
+	// Botones: elevados respecto al panel; al pulsar pasan al color de acento
+	colors[ImGuiCol_Button] = EditorPalette::RAISED;
+	colors[ImGuiCol_ButtonHovered] = EditorPalette::RAISED_HOVERED;
+	colors[ImGuiCol_ButtonActive] = accent;
+
+	// Header = filas seleccionadas (Selectable, TreeNode) y elementos de menu bajo el raton.
+	// Las cabeceras de los componentes del Inspector usan ComponentHeader() para no salir azules.
+	colors[ImGuiCol_Header] = withAlpha(accent, 0.45f);
+	colors[ImGuiCol_HeaderHovered] = withAlpha(accent, 0.65f);
+	colors[ImGuiCol_HeaderActive] = withAlpha(accent, 0.85f);
+
+	// Pestanas: la activa tiene el color del panel (parece "unida" a el) y una linea de acento encima
+	colors[ImGuiCol_Tab] = bgDark;
+	colors[ImGuiCol_TabHovered] = EditorPalette::RAISED_HOVERED;
+	colors[ImGuiCol_TabSelected] = bgPanel;
+	colors[ImGuiCol_TabSelectedOverline] = accent;
+	colors[ImGuiCol_TabDimmed] = bgDark;                                   // barra de pestanas sin foco
+	colors[ImGuiCol_TabDimmedSelected] = ImVec4(0.110f, 0.110f, 0.119f, 1.00f);
+	colors[ImGuiCol_TabDimmedSelectedOverline] = ImVec4(0.30f, 0.30f, 0.33f, 1.00f);
+
+	// Separadores, tiradores de redimensionado y barras de scroll
+	colors[ImGuiCol_Separator] = ImVec4(1.0f, 1.0f, 1.0f, 0.08f);
+	colors[ImGuiCol_SeparatorHovered] = withAlpha(accent, 0.78f);
+	colors[ImGuiCol_SeparatorActive] = accent;
+	colors[ImGuiCol_ResizeGrip] = ImVec4(1.0f, 1.0f, 1.0f, 0.06f);
+	colors[ImGuiCol_ResizeGripHovered] = withAlpha(accent, 0.67f);
+	colors[ImGuiCol_ResizeGripActive] = withAlpha(accent, 0.95f);
+	colors[ImGuiCol_ScrollbarBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+	colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.26f, 0.26f, 0.28f, 1.00f);
+	colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.34f, 0.34f, 0.37f, 1.00f);
+	colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.43f, 0.43f, 0.47f, 1.00f);
+	colors[ImGuiCol_TreeLines] = ImVec4(1.0f, 1.0f, 1.0f, 0.13f);
+
+	// Tablas (ventana Resources) y graficas (Configuration)
+	colors[ImGuiCol_TableHeaderBg] = EditorPalette::RAISED;
+	colors[ImGuiCol_TableBorderStrong] = ImVec4(0.0f, 0.0f, 0.0f, 0.60f);
+	colors[ImGuiCol_TableBorderLight] = ImVec4(1.0f, 1.0f, 1.0f, 0.06f);
+	colors[ImGuiCol_TableRowBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+	colors[ImGuiCol_TableRowBgAlt] = ImVec4(1.0f, 1.0f, 1.0f, 0.03f);
+	colors[ImGuiCol_PlotLines] = accentHovered;
+	colors[ImGuiCol_PlotLinesHovered] = EditorPalette::LEVEL_WARNING;
+	colors[ImGuiCol_PlotHistogram] = accent;
+	colors[ImGuiCol_PlotHistogramHovered] = accentHovered;
+
+	// Drag & drop, navegacion con teclado y fondos atenuados de las ventanas modales
+	colors[ImGuiCol_DragDropTarget] = ImVec4(1.00f, 0.78f, 0.25f, 0.95f); // ambar: destaca sobre el azul de seleccion
+	colors[ImGuiCol_NavCursor] = accentHovered;
+	colors[ImGuiCol_NavWindowingHighlight] = ImVec4(1.0f, 1.0f, 1.0f, 0.70f);
+	colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.35f);
+	colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.55f);
+
+	// Con multi-viewport una ventana sacada fuera de la principal pasa a ser una ventana real del
+	// sistema operativo: no puede tener esquinas redondeadas ni transparencia (se verian en negro).
+	if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
+	{
+		style.WindowRounding = 0.0f;
+		style.PopupRounding = 0.0f;
+		colors[ImGuiCol_WindowBg].w = 1.0f;
+		colors[ImGuiCol_PopupBg].w = 1.0f;
+	}
+
+	// ---------------------------------------------------------------------------------
+	// Gizmo 3D (ImGuizmo): colores de eje mas luminosos que los de serie, que sobre un fondo
+	// oscuro apenas se distinguen (sobre todo el azul del eje Z). Convenio habitual: X rojo, Y verde, Z azul.
+	// ---------------------------------------------------------------------------------
+	ImGuizmo::Style& gizmoStyle = ImGuizmo::GetStyle();
+	const ImVec4 axisX = ImVec4(0.92f, 0.30f, 0.32f, 1.00f);
+	const ImVec4 axisY = ImVec4(0.50f, 0.82f, 0.26f, 1.00f);
+	const ImVec4 axisZ = ImVec4(0.26f, 0.56f, 0.97f, 1.00f);
+	gizmoStyle.Colors[ImGuizmo::DIRECTION_X] = axisX;
+	gizmoStyle.Colors[ImGuizmo::DIRECTION_Y] = axisY;
+	gizmoStyle.Colors[ImGuizmo::DIRECTION_Z] = axisZ;
+	gizmoStyle.Colors[ImGuizmo::PLANE_X] = withAlpha(axisX, 0.40f);
+	gizmoStyle.Colors[ImGuizmo::PLANE_Y] = withAlpha(axisY, 0.40f);
+	gizmoStyle.Colors[ImGuizmo::PLANE_Z] = withAlpha(axisZ, 0.40f);
+	gizmoStyle.Colors[ImGuizmo::SELECTION] = ImVec4(1.00f, 0.80f, 0.20f, 1.00f); // eje bajo el raton / en uso
+
+	// Los ejes apuntan siempre en su sentido positivo (como en Unity / Unreal). Por defecto ImGuizmo
+	// los voltea hacia la camara, y entonces la flecha deja de indicar hacia donde crece la coordenada.
+	ImGuizmo::AllowAxisFlip(false);
 }
 
 bool ModuleUI::PreUpdate()
@@ -163,6 +462,9 @@ bool ModuleUI::PreUpdate()
 	ImGui_ImplOpenGL3_NewFrame();
 	ImGui_ImplSDL3_NewFrame();
 	ImGui::NewFrame();
+
+	// ImGuizmo reinicia su estado interno cada frame; tiene que ir justo despues de ImGui::NewFrame()
+	ImGuizmo::BeginFrame();
 
 	return true;
 }
@@ -452,9 +754,10 @@ void ModuleUI::DrawToolbar()
 	const float height = ImGui::GetFrameHeight() + ImGui::GetStyle().WindowPadding.y * 2.0f;
 	const PlayState state = scene ? scene->GetPlayState() : PlayState::Stopped;
 
-	// En modo Play la barra cambia de color, como en Unity, para que se note que estamos simulando
+	// En modo Play la barra cambia de color, como en Unity, para que se note que estamos simulando.
+	// En edicion usa el mismo tono que la barra de menu: las dos forman una unica cabecera.
 	const bool playMode = (state != PlayState::Stopped);
-	if (playMode) ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.12f, 0.22f, 0.38f, 1.0f));
+	ImGui::PushStyleColor(ImGuiCol_WindowBg, playMode ? ImVec4(0.09f, 0.19f, 0.34f, 1.0f) : ImGui::GetStyleColorVec4(ImGuiCol_MenuBarBg));
 
 	const ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollWithMouse;
 	if (ImGui::BeginViewportSideBar("##MainToolbar", viewport, ImGuiDir_Up, height, flags) && scene)
@@ -462,53 +765,57 @@ void ModuleUI::DrawToolbar()
 		// Nombre de la escena a la izquierda
 		const std::string& scenePath = scene->GetCurrentScenePath();
 		ImGui::AlignTextToFramePadding();
-		ImGui::TextDisabled("Escena: %s", scenePath.empty() ? "(sin guardar)" : FileSystem::GetFileName(scenePath).c_str());
+		ImGui::TextDisabled(ICON_FA_CLAPPERBOARD "  Escena: %s", scenePath.empty() ? "(sin guardar)" : FileSystem::GetFileName(scenePath).c_str());
 
-		// Botones centrados (o justo despues del nombre de la escena si no caben)
-		const float buttonWidth = 64.0f;
+		// Botones centrados (o justo despues del nombre de la escena si no caben).
+		// Solo llevan icono, asi que son mas estrechos que los antiguos botones de texto.
+		const ImVec2 buttonSize(ImGui::GetFrameHeight() * 1.75f, 0.0f);
 		const float spacing = ImGui::GetStyle().ItemSpacing.x;
-		const float groupWidth = buttonWidth * 3.0f + spacing * 2.0f;
+		const float groupWidth = buttonSize.x * 3.0f + spacing * 2.0f;
 		const float textEndX = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + spacing * 2.0f;
 		ImGui::SameLine(std::max(textEndX, (ImGui::GetWindowWidth() - groupWidth) * 0.5f));
 
-		// Play / Stop
+		// Play / Stop: iconos de Font Awesome. El "##..." da al boton un ID estable aunque no tenga texto.
 		if (state == PlayState::Stopped)
 		{
-			if (ImGui::Button("Play", ImVec2(buttonWidth, 0.0f))) scene->Play();
-			ImGui::SetItemTooltip("Empieza la simulacion (Ctrl+P). Al parar se recupera el estado actual de la escena.");
+			ImGui::PushStyleColor(ImGuiCol_Text, EditorPalette::STATE_PLAY);
+			if (ImGui::Button(ICON_FA_PLAY "##Play", buttonSize)) scene->Play();
+			ImGui::PopStyleColor();
+			ImGui::SetItemTooltip("Play: empieza la simulacion (Ctrl+P).\nAl parar se recupera el estado actual de la escena.");
 		}
 		else
 		{
-			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.25f, 0.2f, 1.0f));
-			if (ImGui::Button("Stop", ImVec2(buttonWidth, 0.0f))) scene->Stop();
-			ImGui::PopStyleColor();
-			ImGui::SetItemTooltip("Para la simulacion y restaura la escena como estaba al pulsar Play (Ctrl+P)");
+			if (ColoredButton(ICON_FA_STOP "##Stop", buttonSize, EditorPalette::STATE_STOP, EditorPalette::STATE_STOP_HOVERED, EditorPalette::STATE_STOP)) scene->Stop();
+			ImGui::SetItemTooltip("Stop: para la simulacion y restaura la escena como estaba al pulsar Play (Ctrl+P)");
 		}
 
-		// Pause (resaltado mientras esta en pausa)
+		// Pause (resaltado mientras esta en pausa: volver a pulsarlo reanuda la simulacion)
 		ImGui::SameLine();
 		ImGui::BeginDisabled(state == PlayState::Stopped);
 		const bool paused = (state == PlayState::Paused);
-		if (paused) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.6f, 0.15f, 1.0f));
-		if (ImGui::Button(paused ? "Resume" : "Pause", ImVec2(buttonWidth, 0.0f))) scene->Pause();
-		if (paused) ImGui::PopStyleColor();
+		const bool pausePressed = paused
+			? ColoredButton(ICON_FA_PAUSE "##Pause", buttonSize, EditorPalette::STATE_PAUSE, EditorPalette::STATE_PAUSE_HOVERED, EditorPalette::STATE_PAUSE)
+			: ImGui::Button(ICON_FA_PAUSE "##Pause", buttonSize);
+		if (pausePressed) scene->Pause();
 		ImGui::EndDisabled();
+		IconTooltip(paused ? "Reanudar la simulacion (Ctrl+Shift+P)" : "Pause: congela la simulacion (Ctrl+Shift+P)");
 
 		// Step (solo en pausa)
 		ImGui::SameLine();
 		ImGui::BeginDisabled(state != PlayState::Paused);
-		if (ImGui::Button("Step", ImVec2(buttonWidth, 0.0f))) scene->Step();
+		if (ImGui::Button(ICON_FA_FORWARD_STEP "##Step", buttonSize)) scene->Step();
 		ImGui::EndDisabled();
-		ImGui::SetItemTooltip("Avanza un unico frame de la simulacion");
+		IconTooltip("Step: avanza un unico frame de la simulacion (solo en pausa)");
 
 		// Estado y tiempo de juego
 		ImGui::SameLine();
 		const char* stateText = (state == PlayState::Playing) ? "PLAY" : (state == PlayState::Paused) ? "PAUSA" : "EDICION";
-		const ImVec4 stateColor = (state == PlayState::Playing) ? ImVec4(0.4f, 1.0f, 0.5f, 1.0f) :
-			(state == PlayState::Paused) ? ImVec4(1.0f, 0.8f, 0.3f, 1.0f) : ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+		const ImVec4 stateColor = (state == PlayState::Playing) ? EditorPalette::STATE_PLAY :
+			(state == PlayState::Paused) ? EditorPalette::LEVEL_WARNING : EditorPalette::ICON_NEUTRAL;
 		ImGui::TextColored(stateColor, "  %s", stateText);
 		ImGui::SameLine();
-		ImGui::TextDisabled("| Tiempo de juego: %.2f s", scene->GetGameTime());
+		ImGui::TextDisabled(ICON_FA_CLOCK "  %.2f s", scene->GetGameTime());
+		ImGui::SetItemTooltip("Tiempo de juego (segundos de simulacion)");
 
 		// Escala de tiempo
 		ImGui::SameLine();
@@ -521,7 +828,7 @@ void ModuleUI::DrawToolbar()
 	}
 	ImGui::End();
 
-	if (playMode) ImGui::PopStyleColor();
+	ImGui::PopStyleColor();
 }
 
 void ModuleUI::DrawSceneFilePopups()
@@ -581,6 +888,21 @@ void ModuleUI::HandleShortcuts()
 		else if (scene->IsInPlayMode()) scene->Stop();
 		else scene->Play();
 	}
+
+	// W / E / R: herramienta del gizmo (Mover / Rotar / Escalar), como en Unity.
+	// Solo con la vista Scene bajo el raton o con Scene / Hierarchy enfocadas, y nunca:
+	//  - mientras se pilota la camara con el clic derecho (W y E son teclas de movimiento),
+	//  - a mitad de un arrastre del gizmo (cambiaria la operacion sobre la marcha),
+	//  - con Ctrl o Alt pulsados (son otros atajos).
+	GameObject* editorCamera = scene->GetEditorCameraObject();
+	const CameraComponent* camera = editorCamera ? editorCamera->GetComponent<CameraComponent>() : nullptr;
+	const bool flyingCamera = (camera != nullptr && camera->IsControllingCamera()) || ImGui::IsMouseDown(ImGuiMouseButton_Right);
+	if ((sceneViewHovered || sceneOrHierarchyFocused) && !flyingCamera && !gizmoInUse && !io.KeyCtrl && !io.KeyAlt)
+	{
+		if (ImGui::IsKeyPressed(ImGuiKey_W, false)) gizmoOperation = GizmoOperation::Translate;
+		if (ImGui::IsKeyPressed(ImGuiKey_E, false)) gizmoOperation = GizmoOperation::Rotate;
+		if (ImGui::IsKeyPressed(ImGuiKey_R, false)) gizmoOperation = GizmoOperation::Scale;
+	}
 }
 
 void ModuleUI::DrawSceneOverlayBar()
@@ -589,8 +911,12 @@ void ModuleUI::DrawSceneOverlayBar()
 	Scene* scene = Engine::GetInstance().scene.get();
 	if (!render || !scene) return;
 
-	// Menu "Gizmos" con las opciones de depuracion de la vista Scene
-	if (ImGui::Button("Gizmos")) ImGui::OpenPopup("SceneGizmosPopup");
+	// Herramientas del gizmo de transformacion (Mover / Rotar / Escalar, Local / Global)
+	DrawGizmoToolbar();
+	ImGui::SameLine();
+
+	// Menu "Gizmos" con las opciones de depuracion de la vista Scene ("###" fija el ID del boton)
+	if (ImGui::Button(ICON_FA_EYE "  Gizmos###SceneGizmosButton")) ImGui::OpenPopup("SceneGizmosPopup");
 	if (ImGui::BeginPopup("SceneGizmosPopup"))
 	{
 		RenderSettings rs = render->GetSettings();
@@ -630,7 +956,138 @@ void ModuleUI::DrawSceneOverlayBar()
 	if (scene->IsInPlayMode())
 	{
 		ImGui::SameLine();
-		ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "[MODO PLAY]");
+		ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), ICON_FA_GAMEPAD "  MODO PLAY");
+	}
+}
+
+void ModuleUI::DrawGizmoToolbar()
+{
+	// Boton "toggle": el de la herramienta activa se pinta con el color de acento
+	const auto toolButton = [](const char* label, bool active, const char* tooltip) -> bool
+	{
+		const bool pressed = active
+			? ColoredButton(label, ImVec2(0.0f, 0.0f), EditorPalette::ACCENT, EditorPalette::ACCENT_HOVERED, EditorPalette::ACCENT_ACTIVE)
+			: ImGui::Button(label);
+		ImGui::SetItemTooltip("%s", tooltip);
+		return pressed;
+	};
+
+	// Los tres botones van casi pegados para que se lean como un grupo
+	const float groupSpacing = 2.0f;
+	if (toolButton(ICON_FA_ARROWS_UP_DOWN_LEFT_RIGHT "##GizmoTranslate", gizmoOperation == GizmoOperation::Translate,
+		"Mover (W)\nCtrl mientras arrastras: ajuste a rejilla")) gizmoOperation = GizmoOperation::Translate;
+	ImGui::SameLine(0.0f, groupSpacing);
+	if (toolButton(ICON_FA_ARROWS_ROTATE "##GizmoRotate", gizmoOperation == GizmoOperation::Rotate,
+		"Rotar (E)\nCtrl mientras arrastras: pasos de 15 grados")) gizmoOperation = GizmoOperation::Rotate;
+	ImGui::SameLine(0.0f, groupSpacing);
+	if (toolButton(ICON_FA_UP_RIGHT_AND_DOWN_LEFT_FROM_CENTER "##GizmoScale", gizmoOperation == GizmoOperation::Scale,
+		"Escalar (R)\nCtrl mientras arrastras: pasos de 0.1")) gizmoOperation = GizmoOperation::Scale;
+
+	// Espacio de referencia de los ejes. El boton tiene un ancho fijo (el de la etiqueta mas larga)
+	// para que el resto de la barra no se mueva al alternar entre "Local" y "Global".
+	ImGui::SameLine();
+	const char* localLabel = ICON_FA_CUBE "  Local###GizmoSpace";
+	const char* globalLabel = ICON_FA_GLOBE "  Global###GizmoSpace";
+	const float labelWidth = std::max(ImGui::CalcTextSize(localLabel, nullptr, true).x, ImGui::CalcTextSize(globalLabel, nullptr, true).x);
+	const ImVec2 spaceButtonSize(labelWidth + ImGui::GetStyle().FramePadding.x * 2.0f, 0.0f);
+	const bool localSpace = (gizmoSpace == GizmoSpace::Local);
+	if (ImGui::Button(localSpace ? localLabel : globalLabel, spaceButtonSize))
+	{
+		gizmoSpace = localSpace ? GizmoSpace::World : GizmoSpace::Local;
+	}
+	ImGui::SetItemTooltip("Espacio del gizmo (clic para alternar):\n  Local: ejes del propio objeto\n  Global: ejes del mundo\nLa escala se aplica siempre en los ejes locales.");
+}
+
+void ModuleUI::DrawTransformGizmo(const ImVec2& viewportPos, const ImVec2& viewportSize, CameraComponent* camera)
+{
+	Scene* scene = Engine::GetInstance().scene.get();
+	GameObject* selected = scene ? scene->GetSelected() : nullptr;
+	TransformComponent* transform = selected ? selected->GetComponent<TransformComponent>() : nullptr;
+	if (camera == nullptr || transform == nullptr || viewportSize.x < 1.0f || viewportSize.y < 1.0f) return;
+
+	// ---------------------------------------------------------------------------------
+	// 1) Donde se dibuja: en el draw list de la ventana Scene (queda por encima de la imagen del
+	//    framebuffer y recortado por la ventana) y dentro del rectangulo EXACTO de esa imagen.
+	//    Son coordenadas de pantalla, las mismas en las que ImGui da la posicion del raton, asi
+	//    que funciona igual con la ventana acoplada, flotante o fuera de la ventana principal.
+	// ---------------------------------------------------------------------------------
+	ImGuizmo::SetOrthographic(false); // la camara del editor siempre es de perspectiva
+	ImGuizmo::SetDrawlist();
+	ImGuizmo::SetRect(viewportPos.x, viewportPos.y, viewportSize.x, viewportSize.y);
+
+	// ---------------------------------------------------------------------------------
+	// 2) Matrices. View y Projection son las mismas con las que Render::RenderScene dibuja la
+	//    vista Scene (el aspect ratio sale del tamano en pixeles enteros del framebuffer): si no
+	//    coincidieran, el gizmo no caeria encima del objeto. GLM guarda las matrices por columnas,
+	//    igual que OpenGL e ImGuizmo, asi que glm::value_ptr las pasa sin convertir nada.
+	// ---------------------------------------------------------------------------------
+	const float aspectRatio = static_cast<float>(static_cast<int>(viewportSize.x)) / static_cast<float>(static_cast<int>(viewportSize.y));
+	const glm::mat4 view = camera->GetViewMatrix();
+	const glm::mat4 projection = camera->GetProjectionMatrix(aspectRatio);
+	glm::mat4 world = selected->GetWorldMatrix(); // matriz Model en espacio MUNDO: ImGuizmo la modifica
+
+	// Objeto detras de la camara (o pegado al plano cercano): no hay gizmo que dibujar. ImGuizmo hace
+	// esta misma comprobacion dentro de Manipulate(), pero sale con un 'return' ANTES de cerrar el clip
+	// rect que acaba de abrir en el draw list (PushClipRect sin su PopClipRect) y deja ademas el estado
+	// de IsOver() del frame anterior. Se descarta aqui el caso para no llegar nunca a ese camino.
+	const glm::vec4 originClip = projection * view * glm::vec4(glm::vec3(world[3]), 1.0f);
+	if (originClip.z < 0.001f && !ImGuizmo::IsUsing()) return;
+
+	// ---------------------------------------------------------------------------------
+	// 3) Operacion, espacio y ajuste a rejilla (Ctrl)
+	// ---------------------------------------------------------------------------------
+	ImGuizmo::OPERATION operation = ImGuizmo::TRANSLATE;
+	float snapStep = GIZMO_SNAP_TRANSLATE;
+	if (gizmoOperation == GizmoOperation::Rotate)
+	{
+		operation = ImGuizmo::ROTATE;
+		snapStep = GIZMO_SNAP_ROTATE;
+	}
+	else if (gizmoOperation == GizmoOperation::Scale)
+	{
+		operation = ImGuizmo::SCALE;
+		snapStep = GIZMO_SNAP_SCALE;
+	}
+
+	// Una escala en ejes del mundo deformaria (shear) un objeto rotado: la escala es siempre local
+	const bool localSpace = (gizmoSpace == GizmoSpace::Local) || (gizmoOperation == GizmoOperation::Scale);
+	const ImGuizmo::MODE mode = localSpace ? ImGuizmo::LOCAL : ImGuizmo::WORLD;
+
+	const float snapValues[3] = { snapStep, snapStep, snapStep };
+	const bool snapping = ImGui::GetIO().KeyCtrl;
+
+	const bool changed = ImGuizmo::Manipulate(glm::value_ptr(view), glm::value_ptr(projection), operation, mode,
+		glm::value_ptr(world), nullptr, snapping ? snapValues : nullptr);
+
+	// ---------------------------------------------------------------------------------
+	// 4) Prioridad de input. Estos dos flags son los que consultan DrawScenePanel (para no lanzar
+	//    el raycast de seleccion) y la camara del editor (para no moverse) en este clic.
+	// ---------------------------------------------------------------------------------
+	gizmoInUse = ImGuizmo::IsUsing();
+	gizmoHovered = ImGuizmo::IsOver();
+
+	if (!changed || !gizmoInUse) return;
+
+	// ---------------------------------------------------------------------------------
+	// 5) Aplicar el resultado. ImGuizmo devuelve la nueva matriz en espacio MUNDO, pero el
+	//    TransformComponent guarda posicion / rotacion / escala LOCALES (relativas al padre):
+	//        world = parentWorld * local   ->   local = inverse(parentWorld) * world
+	// ---------------------------------------------------------------------------------
+	const GameObject* parent = selected->GetParent();
+	const glm::mat4 parentWorld = parent ? parent->GetWorldMatrix() : glm::mat4(1.0f);
+	const glm::mat4 local = glm::inverse(parentWorld) * world;
+
+	glm::vec3 position(0.0f), rotation(0.0f), scale(1.0f);
+	if (!transform->DecomposeLocalMatrix(local, position, rotation, scale)) return;
+
+	// Solo se escribe el canal que se esta manipulando. Descomponer una matriz y volver a componerla
+	// acumula error numerico: si al mover se reescribieran tambien rotacion y escala, sus valores
+	// irian "bailando" en el Inspector (y los angulos de Euler pueden saltar a otra terna equivalente).
+	switch (gizmoOperation)
+	{
+	case GizmoOperation::Translate: transform->SetPosition(position); break;
+	case GizmoOperation::Rotate:    transform->SetRotation(rotation); break;
+	case GizmoOperation::Scale:     transform->SetScale(scale);       break;
 	}
 }
 
@@ -645,10 +1102,20 @@ void ModuleUI::DrawScenePanel()
 	GameObject* editorCamera = scene ? scene->GetEditorCameraObject() : nullptr;
 	CameraComponent* camComp = editorCamera ? editorCamera->GetComponent<CameraComponent>() : nullptr;
 
+	// El estado del gizmo se recalcula cada frame: si este frame no llega a dibujarse (ventana
+	// oculta, nada seleccionado...) no puede quedarse "enganchado" bloqueando la camara o la seleccion
+	gizmoHovered = false;
+	gizmoInUse = false;
+	sceneViewHovered = false;
+
 	if (!showScene)
 	{
 		if (render) render->SetViewportVisible(false);
-		if (camComp) camComp->SetViewportHovered(false);
+		if (camComp)
+		{
+			camComp->SetViewportHovered(false);
+			camComp->SetGizmoState(false, false);
+		}
 		return;
 	}
 
@@ -661,7 +1128,11 @@ void ModuleUI::DrawScenePanel()
 	if (!visible)
 	{
 		if (render) render->SetViewportVisible(false);
-		if (camComp) camComp->SetViewportHovered(false);
+		if (camComp)
+		{
+			camComp->SetViewportHovered(false);
+			camComp->SetGizmoState(false, false);
+		}
 		ImGui::End();
 		return;
 	}
@@ -683,19 +1154,12 @@ void ModuleUI::DrawScenePanel()
 		ImVec2 cursorScreenPos = ImGui::GetCursorScreenPos();
 		ImGui::Image((ImTextureID)(intptr_t)sceneTexture, viewportSize, ImVec2(0, 1), ImVec2(1, 0));
 		imageHovered = ImGui::IsItemHovered();
+		// El clic se guarda ahora (IsItemClicked se refiere al ultimo widget: la imagen) pero se
+		// procesa mas abajo, despues del gizmo, que es quien decide si el clic es suyo.
+		const bool imageClicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
 
 		Input* input = Engine::GetInstance().input.get();
 		bool altHeld = input && (input->GetKey(SDL_SCANCODE_LALT) == KEY_DOWN || input->GetKey(SDL_SCANCODE_LALT) == KEY_REPEAT);
-
-		// Selección por Raycast al hacer clic izquierdo sobre el viewport (sin Alt para no interferir con la órbita)
-		if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !altHeld && camComp)
-		{
-			ImVec2 mousePos = ImGui::GetMousePos();
-			float localMouseX = mousePos.x - cursorScreenPos.x;
-			float localMouseY = mousePos.y - cursorScreenPos.y;
-			camComp->PerformRaycast(localMouseX, localMouseY, viewportSize.x, viewportSize.y);
-			inspectorShowsAsset = false;
-		}
 
 		// Soltar assets sobre la vista Scene:
 		//   modelo  -> se instancia donde apunta el raton (sobre el objeto que haya debajo)
@@ -752,10 +1216,31 @@ void ModuleUI::DrawScenePanel()
 			}
 			ImGui::EndDragDropTarget();
 		}
+
+		// Gizmo de transformacion del objeto seleccionado, acotado al rectangulo de la imagen.
+		// Se dibuja ANTES de procesar el clic para saber en este mismo frame si el raton esta sobre el.
+		DrawTransformGizmo(cursorScreenPos, viewportSize, camComp);
+
+		// Selección por Raycast al hacer clic izquierdo sobre el viewport (sin Alt para no interferir con la órbita).
+		// Si el clic cae sobre el gizmo (o empieza a arrastrarlo) es del gizmo: no se lanza el rayo, porque
+		// seleccionaria el objeto que hay detras o deseleccionaria el actual.
+		if (imageClicked && !altHeld && camComp && !gizmoHovered && !gizmoInUse)
+		{
+			ImVec2 mousePos = ImGui::GetMousePos();
+			float localMouseX = mousePos.x - cursorScreenPos.x;
+			float localMouseY = mousePos.y - cursorScreenPos.y;
+			camComp->PerformRaycast(localMouseX, localMouseY, viewportSize.x, viewportSize.y);
+			inspectorShowsAsset = false;
+		}
 	}
+
+	sceneViewHovered = imageHovered || ImGui::IsWindowHovered();
 
 	if (camComp)
 	{
+		// La camara lee este estado en su proximo Update (Scene se actualiza antes que la UI)
+		camComp->SetGizmoState(gizmoHovered, gizmoInUse);
+
 		bool mouseDisabledForCamera = (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_NoMouse) != 0;
 		if (camComp->IsControllingCamera())
 		{
@@ -950,24 +1435,44 @@ void ModuleUI::DrawHierarchyNode(GameObject* node, GameObject* selected)
 		ImGui::SetNextItemOpen(true, ImGuiCond_Always);
 	}
 
-	// Objetos desactivados en gris; la Main Camera en azul
+	// Icono segun lo que ES el GameObject (por sus componentes), para reconocerlo de un vistazo:
+	//   camara -> video | con malla -> cubo | sin malla pero con hijos (modelo / grupo) -> cubos | vacio -> punto
+	const char* icon = ICON_FA_CIRCLE_DOT;
+	ImVec4 iconColor = EditorPalette::ICON_NEUTRAL;
+	if (node->GetComponent<CameraComponent>() != nullptr)
+	{
+		icon = ICON_FA_VIDEO;
+		iconColor = EditorPalette::ICON_CAMERA;
+	}
+	else if (node->GetComponent<MeshComponent>() != nullptr)
+	{
+		icon = ICON_FA_CUBE;
+		iconColor = EditorPalette::ICON_MESH;
+	}
+	else if (hasChildren)
+	{
+		icon = ICON_FA_CUBES;
+		iconColor = EditorPalette::ICON_MODEL;
+	}
+
+	// Objetos desactivados en gris (icono incluido); el nombre de la Main Camera en azul
 	const bool isGameCamera = scene && scene->GetGameCameraObject() == node;
-	const bool pushedColor = !node->IsActive() || isGameCamera;
+	ImVec4 nameColor = ImGui::GetStyleColorVec4(ImGuiCol_Text);
 	if (!node->IsActive())
 	{
-		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+		nameColor = ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
+		iconColor = nameColor;
 	}
 	else if (isGameCamera)
 	{
-		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.8f, 1.0f, 1.0f));
+		nameColor = ImVec4(0.55f, 0.8f, 1.0f, 1.0f);
 	}
 
-	bool nodeOpen = ImGui::TreeNodeEx((void*)node, flags, "%s", node->GetName().c_str());
-
-	if (pushedColor)
-	{
-		ImGui::PopStyleColor();
-	}
+	// El nodo se crea sin etiqueta y "icono + nombre" se pinta encima en dos colores (ver DrawIconLabel).
+	// La posicion se lee antes de crear el nodo: el texto de un TreeNode empieza tras el hueco de la flecha.
+	const ImVec2 nodePos = ImGui::GetCursorScreenPos();
+	bool nodeOpen = ImGui::TreeNodeEx((void*)node, flags, "%s", "");
+	EditorIcons::DrawIconLabel(ImVec2(nodePos.x + ImGui::GetTreeNodeToLabelSpacing(), nodePos.y), icon, iconColor, node->GetName().c_str(), nameColor);
 
 	// 1. Selección con clic izquierdo
 	if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen())
@@ -980,7 +1485,7 @@ void ModuleUI::DrawHierarchyNode(GameObject* node, GameObject* selected)
 	{
 		const uint64_t uid = static_cast<uint64_t>(node->GetUUID());
 		ImGui::SetDragDropPayload(EditorDragDrop::GAMEOBJECT, &uid, sizeof(uid));
-		ImGui::Text("Mover '%s'", node->GetName().c_str());
+		ImGui::Text("%s  Mover '%s'", icon, node->GetName().c_str());
 		ImGui::EndDragDropSource();
 	}
 
@@ -1158,7 +1663,8 @@ void ModuleUI::DrawGameObjectInspector(GameObject* selected)
 	// 1. TRANSFORM COMPONENT
 	// =====================================================================
 	TransformComponent* transform = selected->GetComponent<TransformComponent>();
-	if (transform && ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen))
+	// En las cabeceras "###" separa el texto visible (con icono) del ID del widget, que sigue siendo el nombre
+	if (transform && ComponentHeader(ICON_FA_ARROWS_UP_DOWN_LEFT_RIGHT "  Transform###Transform"))
 	{
 		if (ImGui::BeginTable("TransformTable", 2, ImGuiTableFlags_SizingFixedFit))
 		{
@@ -1205,7 +1711,7 @@ void ModuleUI::DrawGameObjectInspector(GameObject* selected)
 	if (selected->GetComponent<MeshComponent>() == nullptr && !selected->GetChildren().empty())
 	{
 		const AABB bounds = selected->GetWorldAABB(true);
-		if (bounds.IsValid() && ImGui::CollapsingHeader("Modelo (hijos)", ImGuiTreeNodeFlags_DefaultOpen))
+		if (bounds.IsValid() && ComponentHeader(ICON_FA_CUBES "  Modelo (hijos)###Modelo (hijos)"))
 		{
 			ImGui::BulletText("Hijos directos: %zu", selected->GetChildren().size());
 			const glm::vec3 size = bounds.GetSize();
@@ -1232,7 +1738,7 @@ void ModuleUI::DrawMeshInspector(GameObject* selected)
 {
 	MeshComponent* mesh = selected->GetComponent<MeshComponent>();
 	if (mesh == nullptr) return;
-	if (!ImGui::CollapsingHeader("Mesh", ImGuiTreeNodeFlags_DefaultOpen)) return;
+	if (!ComponentHeader(ICON_FA_CUBE "  Mesh###Mesh")) return;
 
 	ResourceManager* resources = Engine::GetInstance().resources.get();
 	ImGui::PushID("MeshComponent");
@@ -1344,7 +1850,7 @@ void ModuleUI::DrawMaterialInspector(GameObject* selected)
 {
 	MaterialComponent* material = selected->GetComponent<MaterialComponent>();
 	if (material == nullptr) return;
-	if (!ImGui::CollapsingHeader("Texture & Material", ImGuiTreeNodeFlags_DefaultOpen)) return;
+	if (!ComponentHeader(ICON_FA_PALETTE "  Texture & Material###Texture & Material")) return;
 
 	ResourceManager* resources = Engine::GetInstance().resources.get();
 	ImGui::PushID("MaterialComponent");
@@ -1451,7 +1957,7 @@ void ModuleUI::DrawCameraInspector(GameObject* selected)
 {
 	CameraComponent* cam = selected->GetComponent<CameraComponent>();
 	if (cam == nullptr) return;
-	if (!ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen)) return;
+	if (!ComponentHeader(ICON_FA_VIDEO "  Camera###Camera")) return;
 
 	Scene* scene = Engine::GetInstance().scene.get();
 	ImGui::PushID("CameraComponent");
@@ -1586,7 +2092,7 @@ void ModuleUI::DrawConsolePanel()
 	LogSystem& logSys = LogSystem::GetInstance();
 
 	// 1. Barra de herramientas superior
-	if (ImGui::Button("Clear"))
+	if (ImGui::Button(ICON_FA_TRASH_CAN "  Clear###ConsoleClear"))
 	{
 		logSys.Clear();
 		selectedLogIndex = -1;
@@ -1604,14 +2110,14 @@ void ModuleUI::DrawConsolePanel()
 
 	// Filtro de búsqueda por texto
 	ImGui::SetNextItemWidth(160.0f);
-	if (ImGui::InputTextWithHint("##ConsoleSearch", "Buscar...", consoleFilter, sizeof(consoleFilter)))
+	if (ImGui::InputTextWithHint("##ConsoleSearch", ICON_FA_MAGNIFYING_GLASS "  Buscar...", consoleFilter, sizeof(consoleFilter)))
 	{
 		consoleFilterDirty = true;
 	}
 	if (consoleFilter[0] != '\0')
 	{
 		ImGui::SameLine();
-		if (ImGui::SmallButton("x"))
+		if (ImGui::SmallButton(ICON_FA_XMARK "##ConsoleSearchClear"))
 		{
 			consoleFilter[0] = '\0';
 			consoleFilterDirty = true;
@@ -1622,10 +2128,12 @@ void ModuleUI::DrawConsolePanel()
 	ImGui::Spacing();
 	ImGui::SameLine();
 
-	// Filtros por Categoría con Contadores
-	ImVec4 infoColor = showInfo ? ImVec4(0.35f, 0.75f, 1.0f, 1.0f) : ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
+	// Filtros por Categoría con Contadores. El contador forma parte del texto del boton, asi que el ID se
+	// fija con "###": si no, cambiaria cada vez que llega un log y el clic podria perderse.
+	const ImVec4 filterOffColor = ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
+	ImVec4 infoColor = showInfo ? EditorPalette::LEVEL_INFO : filterOffColor;
 	ImGui::PushStyleColor(ImGuiCol_Text, infoColor);
-	std::string infoLabel = "[i] Info (" + std::to_string(logSys.GetInfoCount()) + ")";
+	std::string infoLabel = ICON_FA_CIRCLE_INFO "  Info (" + std::to_string(logSys.GetInfoCount()) + ")###ConsoleInfo";
 	if (ImGui::SmallButton(infoLabel.c_str()))
 	{
 		showInfo = !showInfo;
@@ -1634,9 +2142,9 @@ void ModuleUI::DrawConsolePanel()
 	ImGui::PopStyleColor();
 	ImGui::SameLine();
 
-	ImVec4 warnColor = showWarnings ? ImVec4(1.0f, 0.82f, 0.25f, 1.0f) : ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
+	ImVec4 warnColor = showWarnings ? EditorPalette::LEVEL_WARNING : filterOffColor;
 	ImGui::PushStyleColor(ImGuiCol_Text, warnColor);
-	std::string warnLabel = "[!] Warn (" + std::to_string(logSys.GetWarningCount()) + ")";
+	std::string warnLabel = ICON_FA_TRIANGLE_EXCLAMATION "  Warn (" + std::to_string(logSys.GetWarningCount()) + ")###ConsoleWarn";
 	if (ImGui::SmallButton(warnLabel.c_str()))
 	{
 		showWarnings = !showWarnings;
@@ -1645,9 +2153,9 @@ void ModuleUI::DrawConsolePanel()
 	ImGui::PopStyleColor();
 	ImGui::SameLine();
 
-	ImVec4 errColor = showErrors ? ImVec4(1.0f, 0.4f, 0.4f, 1.0f) : ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
+	ImVec4 errColor = showErrors ? EditorPalette::LEVEL_ERROR : filterOffColor;
 	ImGui::PushStyleColor(ImGuiCol_Text, errColor);
-	std::string errLabel = "[X] Error (" + std::to_string(logSys.GetErrorCount()) + ")";
+	std::string errLabel = ICON_FA_CIRCLE_XMARK "  Error (" + std::to_string(logSys.GetErrorCount()) + ")###ConsoleError";
 	if (ImGui::SmallButton(errLabel.c_str()))
 	{
 		showErrors = !showErrors;
@@ -1715,21 +2223,22 @@ void ModuleUI::DrawConsolePanel()
 		const ConsoleDisplayItem& item = consoleViewCache[viewIdx];
 		if (!logSys.GetEntry(item.logIndex, entry)) continue;
 
+		// Icono del nivel del mensaje (los iconos tienen un ancho minimo comun: los textos quedan en columna)
 		ImVec4 textColor;
-		const char* typeTag = "[INFO]";
+		const char* typeTag = ICON_FA_CIRCLE_INFO;
 		switch (entry.type)
 		{
 		case LogType::Info:
-			textColor = ImVec4(0.85f, 0.85f, 0.85f, 1.0f);
-			typeTag = "[INFO]";
+			textColor = EditorPalette::LEVEL_INFO;
+			typeTag = ICON_FA_CIRCLE_INFO;
 			break;
 		case LogType::Warning:
-			textColor = ImVec4(1.0f, 0.82f, 0.25f, 1.0f);
-			typeTag = "[WARN]";
+			textColor = EditorPalette::LEVEL_WARNING;
+			typeTag = ICON_FA_TRIANGLE_EXCLAMATION;
 			break;
 		case LogType::Error:
-			textColor = ImVec4(1.0f, 0.4f, 0.4f, 1.0f);
-			typeTag = "[ERR ]";
+			textColor = EditorPalette::LEVEL_ERROR;
+			typeTag = ICON_FA_CIRCLE_XMARK;
 			break;
 		}
 

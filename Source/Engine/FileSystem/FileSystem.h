@@ -28,6 +28,10 @@ namespace FileSystem
 	constexpr const char* LIBRARY_TEXTURES_DIR = "Library/Textures";
 	constexpr const char* LIBRARY_MODELS_DIR = "Library/Models";
 
+	// Recursos propios del editor (fuentes .ttf de la interfaz). Estan fuera de Assets/ a proposito:
+	// no son assets del juego, asi que ni se importan a Library ni aparecen en la ventana Assets
+	constexpr const char* EDITOR_FONTS_DIR = "EditorResources/Fonts";
+
 	// Extensiones de los ficheros propios del motor
 	constexpr const char* META_EXTENSION = ".meta";
 	constexpr const char* MESH_EXTENSION = ".mesh";

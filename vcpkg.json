@@ -15,6 +15,7 @@
         "opengl3-binding"
       ]
     },
+    "imguizmo",
     "sdl3",
     "devil",
     "assimp",

@@ -10,6 +10,8 @@
 #include <vector>
 
 class GameObject;
+class CameraComponent;
+struct ImVec2;
 
 class ModuleUI : public Module
 {
@@ -27,11 +29,20 @@ public:
 	void ResetLayout() { resetLayout = true; }
 
 private:
+	// ----------------- Aspecto del editor (se llaman una vez, en Start) -----------------
+	void LoadEditorFonts();      // fuente de texto .ttf + iconos de Font Awesome fusionados
+	void SetupEditorStyle();     // tema oscuro propio (colores y geometria de ImGuiStyle)
+
 	void RenderUI();
 	bool DrawMainMenuBar();
 	void DrawToolbar();          // Play / Pause / Step / Stop
 	void DrawScenePanel();
 	void DrawSceneOverlayBar();  // fila superior de la vista Scene: gizmos + estadisticas de culling
+	void DrawGizmoToolbar();     // botones Mover / Rotar / Escalar y espacio Local / Global
+
+	// Gizmo 3D (ImGuizmo) del GameObject seleccionado, dibujado encima de la imagen de la vista Scene.
+	// 'viewportPos' y 'viewportSize' son el rectangulo de esa imagen en coordenadas de pantalla.
+	void DrawTransformGizmo(const ImVec2& viewportPos, const ImVec2& viewportSize, CameraComponent* camera);
 	void DrawGamePanel();
 	void DrawHierarchyPanel();
 	void DrawHierarchyNode(GameObject* node, GameObject* selected);
@@ -95,6 +106,17 @@ private:
 
 	// Foco para atajos de teclado (Supr / Delete)
 	bool sceneOrHierarchyFocused = false;
+
+	// ----------------- Gizmo de transformacion (vista Scene) -----------------
+	enum class GizmoOperation { Translate, Rotate, Scale };
+	enum class GizmoSpace { Local, World };
+	GizmoOperation gizmoOperation = GizmoOperation::Translate; // atajos W / E / R
+	GizmoSpace gizmoSpace = GizmoSpace::World;                 // ejes del objeto o ejes del mundo
+	// Prioridad de input: se recalculan cada frame al dibujar el gizmo. Mientras el raton esta
+	// encima del gizmo (o arrastrandolo) un clic no selecciona objetos ni mueve la camara.
+	bool gizmoHovered = false;
+	bool gizmoInUse = false;
+	bool sceneViewHovered = false; // raton sobre la vista Scene (para los atajos W / E / R)
 
 	// Hierarchy: al cambiar la seleccion se despliegan sus padres para que se vea (solo ese frame)
 	GameObject* lastHierarchySelection = nullptr;

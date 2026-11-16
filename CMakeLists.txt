@@ -21,6 +21,8 @@ find_package(SDL3 CONFIG REQUIRED)
 find_package(glad CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(imgui CONFIG REQUIRED)
+# ImGuizmo (CedricGuillemet): gizmos 3D de traslacion / rotacion / escala sobre la vista Scene
+find_package(imguizmo CONFIG REQUIRED)
 find_package(DevIL REQUIRED)
 find_package(assimp CONFIG REQUIRED)
 find_package(Tracy CONFIG REQUIRED)
@@ -41,6 +43,7 @@ SDL3::SDL3
 glad::glad 
 glm::glm 
 imgui::imgui
+imguizmo::imguizmo
 DevIL::ILU
 DevIL::ILUT
 assimp::assimp

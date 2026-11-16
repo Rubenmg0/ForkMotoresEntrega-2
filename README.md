@@ -25,6 +25,12 @@
 - **Camera:** es un componente (FOV, near, far, frustum culling, "Usar como Main Camera").
 - **Add Component** (Mesh, Material, Camera) y **Quitar componente**.
 
+### Gizmos de transformación e interfaz del editor
+- **Gizmo 3D** ([ImGuizmo](https://github.com/CedricGuillemet/ImGuizmo)) sobre el GameObject seleccionado en la vista Scene: **Mover**, **Rotar** y **Escalar**, en espacio **Local** o **Global**. Está acotado al rectángulo de la vista Scene y usa las mismas matrices *View* / *Projection* que el render.
+- **Prioridad de input:** un clic sobre el gizmo no selecciona el objeto que hay detrás ni mueve la cámara (ni órbita, ni rueda, ni `F`) mientras se arrastra.
+- **Iconos vectoriales** (Font Awesome 6, fusionada con la fuente de texto): barra de Play / Pause / Stop / Step, ventana Assets (carpetas, texturas, modelos, mallas, escenas), Hierarchy (cámara, malla, modelo, vacío), Console e Inspector.
+- **Tipografía y tema:** fuente *Roboto* a 16 px en lugar de la fuente pixelada de ImGui, y tema oscuro propio (`ModuleUI::SetupEditorStyle`).
+
 ### Cámara, selección y culling
 - **Mouse picking:** clic izquierdo en la vista Scene. El rayo se prueba primero contra el **octree**, después contra las AABB (ordenadas por distancia) y al final contra los triángulos.
 - Todas las mallas tienen **AABB** y se descartan con **frustum culling** (vista Scene con la cámara del editor y vista Game con la Main Camera).
@@ -72,6 +78,11 @@
 - **Shift (Mantener):** duplica la velocidad de la cámara.
 - **Click Izquierdo:** seleccionar un GameObject (mouse picking).
 
+### Gizmo de transformación (vista Scene)
+- **`W` / `E` / `R`:** herramienta Mover / Rotar / Escalar (también con los botones de la barra de la vista Scene). No cambian mientras se mantiene el click derecho, porque ahí `W` y `E` mueven la cámara.
+- **Botón Local / Global:** ejes del propio objeto o ejes del mundo (la escala siempre es local).
+- **Ctrl (Mantener) mientras se arrastra:** ajuste a rejilla (0.5 unidades, 15º o 0.1 de escala).
+
 ### Atajos
 - **Ctrl+S:** guardar escena. **Ctrl+P:** Play / Stop. **Ctrl+Shift+P:** Pause.
 - **Ctrl+D:** duplicar el GameObject seleccionado. **Supr:** borrar el GameObject (o el asset seleccionado si la ventana Assets tiene el foco).
@@ -100,6 +111,7 @@
 
 ## 📝 Notas para el Profesor
 - La carpeta `Library/` no se sube al repositorio: se genera al arrancar a partir de `Assets/` y de los `.meta` (que sí se suben).
+- La carpeta `EditorResources/` (fuentes de la interfaz: Roboto y Font Awesome 6, con sus licencias) debe ir **junto a `Assets/`** al distribuir el ejecutable. Si falta, el editor arranca igualmente, pero con la fuente por defecto de ImGui y sin iconos.
 - Las texturas muy grandes (por ejemplo `water.jpg`, 8368x5584) se reducen al importar a 2048 px (opción *Tamaño máximo* del `.meta`).
 - `BakerHouse.fbx` trae en el propio fichero una rotación de -90º en X que lo dejaría tumbado; su `.meta` usa la opción de importación **"Eje vertical del fichero: -Z"** para importarlo de pie.
 - El panel de Z-buffer aparece si lo activas en el apartado View.

@@ -54,6 +54,11 @@ public:
     bool IsViewportHovered() const { return viewportHovered; }
     bool IsControllingCamera() const { return isControllingCamera; }
 
+    // El Editor informa del estado del gizmo de transformacion de la vista Scene (prioridad de input):
+    //   hovered -> el raton esta encima del gizmo: Alt + clic izquierdo es para el gizmo, no empieza a orbitar
+    //   inUse   -> se esta arrastrando el gizmo: la camara no se mueve (ni clic derecho, ni rueda, ni F)
+    void SetGizmoState(bool hovered, bool inUse) { gizmoHovered = hovered; gizmoInUse = inUse; }
+
     // Parametros editables desde el Inspector
     float fov = 45.0f;
     float nearPlane = 0.1f;
@@ -78,6 +83,8 @@ private:
 
     TransformComponent* transform = nullptr;
     bool viewportHovered = false;
+    bool gizmoHovered = false; // estado del gizmo del editor en el ultimo frame (ver SetGizmoState)
+    bool gizmoInUse = false;
     bool isControllingCamera = false;
     bool wasRelativeMouseMode = false;
     float lockedMouseX = 0.0f;

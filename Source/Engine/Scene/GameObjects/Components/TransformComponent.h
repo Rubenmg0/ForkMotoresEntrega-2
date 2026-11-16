@@ -48,6 +48,12 @@ public:
 	// Matriz global cacheada: WorldMatrix = ParentWorldMatrix * LocalMatrix
 	const glm::mat4& GetWorldMatrix() const;
 
+	// Operacion inversa de GetLocalModelMatrix(): saca posicion, rotacion (grados, Euler XYZ) y escala
+	// de una matriz LOCAL. La usa el gizmo del editor, que devuelve el resultado como una matriz completa.
+	// Una matriz no guarda el signo de la escala, asi que se conserva el de la escala actual de este
+	// transform. Devuelve false si no se puede descomponer (algun eje con escala ~0 o valores no finitos).
+	bool DecomposeLocalMatrix(const glm::mat4& localMatrix, glm::vec3& outPosition, glm::vec3& outRotation, glm::vec3& outScale) const;
+
 	// Invalida la matriz local y la global (este nodo y todos sus descendientes)
 	void MarkDirty() { dirty = true; InvalidateWorld(); }
 
