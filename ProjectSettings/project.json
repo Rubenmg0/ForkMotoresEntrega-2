@@ -1,0 +1,13 @@
+{
+    "createdAt": 1763856000,
+    "createdWithEngine": "0.4.0",
+    "description": "Proyecto de ejemplo: la calle importada desde FBX con frustum culling, octree y escenas.",
+    "engine": "Maruja Engine",
+    "engineVersion": "0.4.0",
+    "fileVersion": 1,
+    "lastModifiedAt": 1763856000,
+    "lastOpenedAt": 0,
+    "lastScene": "Assets/Scenes/StreetDemo.scene",
+    "name": "Street Demo",
+    "version": "1.0.0"
+}

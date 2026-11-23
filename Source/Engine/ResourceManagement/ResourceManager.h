@@ -44,6 +44,9 @@ public:
 	static constexpr UID BUILTIN_PYRAMID = 5;
 	static UID GetBuiltInMeshUID(PrimitiveType type);
 
+	// Lista de recursos "cocinados" de una build (ruta de proyecto dentro de <Producto>_Data)
+	static constexpr const char* BUILD_RESOURCES_FILE = "resources.json";
+
 	ResourceManager();
 	~ResourceManager() override;
 
@@ -74,6 +77,9 @@ public:
 	// pierden la referencia (malla vacia / textura "missing").
 	bool DeleteAsset(const std::string& assetPath);
 	bool DeleteFolder(const std::string& folderPath);
+	// Renombra / mueve un asset (con su .meta) o una carpeta entera dentro de Assets. Los UID no
+	// cambian, asi que los GameObjects que lo usan no se enteran.
+	bool RenameAsset(const std::string& fromPath, const std::string& toPath);
 
 	bool IsAssetImported(const std::string& assetPath) const;
 	UID GetAssetUID(const std::string& assetPath) const;
@@ -158,6 +164,9 @@ private:
 	UID ImportEmbeddedTexture(const std::string& modelAssetPath, const std::string& fileName, const void* data, size_t size);
 
 	void RegisterBuiltInMeshes();
+
+	// Player: registra los recursos que trae la build (resources.json), sin importar nada
+	bool LoadBuildResources();
 
 	std::unordered_map<UID, std::unique_ptr<Resource>> resources; // todos los recursos por UID
 	std::unordered_map<std::string, AssetRecord> assets;          // asset (ruta) -> recursos

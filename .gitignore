@@ -4,12 +4,16 @@
 ## Get latest from https://github.com/github/gitignore/blob/main/VisualStudio.gitignore
 
 # Class .gitignore
-build
+/build/
 
 # Carpeta Library del motor: se regenera sola a partir de Assets/ + los ficheros .meta
 # (los .meta SI deben subirse al repositorio: guardan los UID y las opciones de importacion)
 Library/
 imgui_layout_a2.ini
+# Layout del editor de cada usuario (lo genera el editor dentro de cada proyecto)
+ProjectSettings/EditorLayout.ini
+# Builds y releases generadas desde File > Build Settings (se regeneran)
+Builds/
 
 # User-specific files
 *.rsuser

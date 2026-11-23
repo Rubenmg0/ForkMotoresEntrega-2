@@ -15,6 +15,9 @@ namespace
 {
 	// Carpeta raiz del proyecto (la que contiene Assets/). Se rellena en FileSystem::Init()
 	std::string projectRoot = ".";
+	bool projectRootForced = false;     // true si el Hub (o --project) eligio la carpeta
+	std::string engineResourcesDir;     // cache de GetEngineResourcesDir()
+	bool engineResourcesSearched = false;
 
 	// Convierte una ruta de std::filesystem a texto con separadores '/'.
 	// En Windows la conversion puede fallar con caracteres raros: en ese caso devolvemos "".
@@ -46,8 +49,68 @@ namespace
 
 namespace FileSystem
 {
+	void SetProjectRoot(const std::string& diskPathUtf8)
+	{
+		std::string root = Normalize(diskPathUtf8);
+		if (root.empty()) return;
+		projectRoot = root;
+		projectRootForced = true;
+	}
+
+	std::string GetExecutableDir()
+	{
+		const char* basePath = SDL_GetBasePath();
+		return basePath ? Normalize(basePath) + "/" : std::string();
+	}
+
+	const std::string& GetEngineResourcesDir()
+	{
+		if (engineResourcesSearched) return engineResourcesDir;
+		engineResourcesSearched = true;
+
+		// 1) junto al .exe (la build copia EditorResources/ alli), 2) sus padres (repo), 3) directorio de trabajo
+		std::vector<fs::path> candidates;
+		const std::string exeDir = GetExecutableDir();
+		if (!exeDir.empty())
+		{
+			try
+			{
+				const fs::path dir = fs::u8path(exeDir);
+				candidates.push_back(dir);
+				candidates.push_back(dir / "..");
+				candidates.push_back(dir / ".." / "..");
+			}
+			catch (...) {}
+		}
+		candidates.push_back(fs::path("."));
+		candidates.push_back(fs::path(".."));
+
+		for (const fs::path& candidate : candidates)
+		{
+			if (DirectoryExistsOnDisk(candidate / ENGINE_RESOURCES_DIR))
+			{
+				engineResourcesDir = PathToString((candidate / ENGINE_RESOURCES_DIR).lexically_normal());
+				break;
+			}
+		}
+		if (engineResourcesDir.empty()) LOG_WARNING("[FileSystem] No se encontro la carpeta '%s' del motor", ENGINE_RESOURCES_DIR);
+		return engineResourcesDir;
+	}
+
 	bool Init()
 	{
+		if (projectRootForced)
+		{
+			bool ok = CreateDirectories(ASSETS_DIR);
+			ok &= CreateDirectories(SCENES_DIR);
+			ok &= CreateDirectories(PROJECT_SETTINGS_DIR);
+			ok &= CreateDirectories(LIBRARY_MESHES_DIR);
+			ok &= CreateDirectories(LIBRARY_TEXTURES_DIR);
+			ok &= CreateDirectories(LIBRARY_MODELS_DIR);
+			LOG("[FileSystem] Raiz del proyecto (elegida): '%s'", projectRoot.c_str());
+			return ok;
+		}
+
 		// Posibles ubicaciones de la carpeta raiz del proyecto, por orden de preferencia:
 		//  1) El directorio de trabajo        (build final: el .exe esta junto a Assets/)
 		//  2) El padre del directorio de trabajo (Visual Studio ejecuta desde la carpeta build/)

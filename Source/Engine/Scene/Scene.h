@@ -70,11 +70,41 @@ public:
 	GameObject* GetEditorCameraObject() const { return editorCameraObj.get(); }
 	GameObject* GetGameCameraObject() const { return gameCameraPtr; }
 	void SetGameCamera(GameObject* cameraObject);
+	// Todas las camaras de juego de la escena (en el orden de la Hierarchy)
+	std::vector<GameObject*> GetCameras() const;
+	// Camara que se ve en un display de la vista Game: la Main Camera si apunta a ese display; si no,
+	// la primera camara activa que apunte a el (nullptr = "No cameras rendering")
+	GameObject* GetCameraForDisplay(int display) const;
 
-	// Selección única de la escena (la consumen Editor y cámara). nullptr = sin selección.
-	// El root y objetos que no pertenezcan a la escena se rechazan.
-	void SetSelected(GameObject* object);
-	GameObject* GetSelected() const { return selected; }
+	// ------------------------------- SELECCION ----------------------------------------
+	// Seleccion multiple (como Unity). El objeto "activo" es el ultimo seleccionado: es el que
+	// muestra el Inspector y donde se coloca el gizmo. El root y los objetos que no pertenecen
+	// a la escena se rechazan.
+	void SetSelected(GameObject* object) { Select(object); }       // = Select (compatibilidad)
+	GameObject* GetSelected() const { return activeSelected; }     // objeto activo (o nullptr)
+	const std::vector<GameObject*>& GetSelection() const { return selection; }
+	bool IsSelected(const GameObject* object) const;
+	bool HasSelection() const { return !selection.empty(); }
+	void Select(GameObject* object);                     // reemplaza la seleccion (nullptr = ninguna)
+	void AddToSelection(GameObject* object);             // anade y lo hace activo
+	void RemoveFromSelection(GameObject* object);
+	void ToggleSelection(GameObject* object);            // Ctrl + clic
+	void SetSelection(const std::vector<GameObject*>& objects, GameObject* active = nullptr);
+	void ClearSelection();
+	void SelectAll();
+	// Seleccion sin los objetos que ya son descendientes de otro seleccionado (para mover / borrar / duplicar)
+	std::vector<GameObject*> GetTopLevelSelection() const;
+	std::vector<uint64_t> GetSelectionUIDs() const;
+	void SelectByUIDs(const std::vector<uint64_t>& uids, uint64_t activeUID = 0);
+	// Sube cada vez que cambia la seleccion (la Hierarchy lo usa para desplegar los padres)
+	uint64_t GetSelectionVersion() const { return selectionVersion; }
+
+	// Restaura un estado serializado de la escena al principio del siguiente frame (Undo / Redo)
+	void RequestRestoreSnapshot(const std::string& text, const std::vector<uint64_t>& selectionUIDs, uint64_t activeUID);
+	// Hay un cambio de escena pendiente (Undo, Stop, cargar escena...) para el siguiente frame
+	bool HasPendingRestore() const { return pendingSnapshot || pendingRestore || !pendingLoadPath.empty() || pendingNewScene || pendingDefaultScene; }
+	// Sube cada vez que se sustituye la escena entera (cargar, nueva, Stop): el editor limpia el Undo
+	uint64_t GetSceneLoadVersion() const { return sceneLoadVersion; }
 
 	// Comprueba si un puntero a GameObject es propiedad viva de esta escena
 	bool OwnsObject(const GameObject* object) const;
@@ -137,6 +167,9 @@ public:
 private:
 	void CreateEditorCamera();
 	void CreateDefaultScene();
+
+	// Apunta la escena en el project.json del proyecto abierto (se reabre al volver a abrirlo)
+	void RememberProjectScene(const std::string& path);
 	void ClearScene();
 	void ProcessPendingDestructions();
 	void RebuildOctree();
@@ -152,7 +185,16 @@ private:
 
 	std::unique_ptr<GameObject> editorCameraObj;
 	GameObject* gameCameraPtr = nullptr;
-	GameObject* selected = nullptr;
+	std::vector<GameObject*> selection;
+	GameObject* activeSelected = nullptr;
+	uint64_t selectionVersion = 0;
+
+	// Undo / Redo: estado pendiente de restaurar
+	bool pendingSnapshot = false;
+	std::string snapshotText;
+	std::vector<uint64_t> snapshotSelection;
+	uint64_t snapshotActive = 0;
+	uint64_t sceneLoadVersion = 0;
 
 	// Octree (se reconstruye cuando cambia la "version espacial" de los GameObjects)
 	Octree octree;
@@ -168,6 +210,7 @@ private:
 
 	// Escenas
 	std::string currentScenePath;
+	bool playAfterLoad = false; // player: entra en Play tras cargar la escena de arranque
 	std::string pendingLoadPath;
 	bool pendingNewScene = false;
 	bool pendingDefaultScene = false;
@@ -175,7 +218,8 @@ private:
 	// Modo Play
 	PlayState playState = PlayState::Stopped;
 	std::string playModeBackup;      // escena serializada al pulsar Play
-	uint64_t playModeSelection = 0;  // UID del seleccionado al pulsar Play
+	std::vector<uint64_t> playModeSelection;  // UIDs seleccionados al pulsar Play
+	uint64_t playModeActive = 0;
 	bool pendingRestore = false;
 	bool stepRequested = false;
 	float gameTime = 0.0f;

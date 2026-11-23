@@ -11,6 +11,8 @@
 #include "GameObjects/Components/CameraComponent.h"
 #include "../Render/Primitives/GeometryGenerator.h"
 #include "../FileSystem/FileSystem.h"
+#include "../Project/ProjectInfo.h"
+#include "../Build/BuildManifest.h"
 
 #include "../ResourceManagement/ResourceManager.h"
 #include "../ResourceManagement/ResourceModel.h"
@@ -51,10 +53,48 @@ bool Scene::Awake()
 
 bool Scene::Start()
 {
-	LOG("[Scene] Configurando escena por defecto...");
 	CreateEditorCamera();
-	CreateDefaultScene();
+
+	// Player (build de un juego): se carga la primera escena de la build y se entra en Play
+	if (Runtime::IsPlayer())
+	{
+		const std::string& startScene = Runtime::GetBuild().GetStartScene();
+		LOG("[Scene] Build: escena de arranque '%s'", startScene.c_str());
+		RequestLoadScene(startScene);
+		playAfterLoad = true;
+		return true;
+	}
+
+	// Escena inicial del proyecto:
+	//   1) la ultima escena abierta / guardada (project.json -> lastScene)
+	//   2) la calle de ejemplo, si el proyecto la tiene
+	//   3) una escena vacia (proyectos nuevos creados desde el Hub)
+	const std::string lastScene = Project::HasActive() ? Project::GetActive().lastScene : std::string();
+	if (!lastScene.empty() && FileSystem::Exists(lastScene))
+	{
+		LOG("[Scene] Abriendo la ultima escena del proyecto: '%s'", lastScene.c_str());
+		RequestLoadScene(lastScene);
+	}
+	else if (FileSystem::Exists(DEFAULT_MODEL_ASSET))
+	{
+		LOG("[Scene] Configurando escena por defecto...");
+		CreateDefaultScene();
+	}
+	else
+	{
+		LOG("[Scene] Proyecto sin escenas: se crea una escena vacia");
+		RequestNewScene();
+	}
 	return true;
+}
+
+void Scene::RememberProjectScene(const std::string& path)
+{
+	if (!Project::HasActive()) return;
+	ProjectInfo& project = Project::GetActive();
+	if (project.lastScene == path) return;
+	project.lastScene = path;
+	Project::SaveActive();
 }
 
 void Scene::CreateEditorCamera()
@@ -125,7 +165,9 @@ void Scene::CreateDefaultScene()
 
 void Scene::ClearScene()
 {
-	selected = nullptr;
+	selection.clear();
+	activeSelected = nullptr;
+	++selectionVersion;
 	gameCameraPtr = nullptr;
 	pendingDestruction.clear();
 	hasLastPickRay = false;
@@ -155,9 +197,10 @@ bool Scene::PreUpdate()
 	if (pendingRestore)
 	{
 		pendingRestore = false;
+		++sceneLoadVersion;
 		if (!playModeBackup.empty() && DeserializeFromString(playModeBackup))
 		{
-			SetSelected(FindByUID(playModeSelection));
+			SelectByUIDs(playModeSelection, playModeActive);
 			LOG("[Scene] Stop: escena restaurada al estado anterior a pulsar Play");
 		}
 		else
@@ -167,15 +210,34 @@ bool Scene::PreUpdate()
 		playModeBackup.clear();
 	}
 
+	// Undo / Redo: se restaura un estado guardado de la escena (los UID se conservan)
+	if (pendingSnapshot)
+	{
+		pendingSnapshot = false;
+		const std::string savedPath = currentScenePath;
+		if (DeserializeFromString(snapshotText))
+		{
+			SelectByUIDs(snapshotSelection, snapshotActive);
+		}
+		else
+		{
+			LOG_ERROR("[Scene] Undo: no se pudo restaurar el estado de la escena");
+		}
+		currentScenePath = savedPath;
+		snapshotText.clear();
+	}
+
 	if (pendingDefaultScene)
 	{
 		pendingDefaultScene = false;
+		++sceneLoadVersion;
 		CreateDefaultScene();
 	}
 
 	if (pendingNewScene)
 	{
 		pendingNewScene = false;
+		++sceneLoadVersion;
 		ClearScene();
 		currentScenePath.clear();
 		GameObject* camera = CreateCamera();
@@ -193,6 +255,7 @@ bool Scene::PreUpdate()
 	{
 		const std::string path = pendingLoadPath;
 		pendingLoadPath.clear();
+		++sceneLoadVersion;
 
 		std::string text;
 		if (!FileSystem::ReadText(path, text))
@@ -206,8 +269,16 @@ bool Scene::PreUpdate()
 		else
 		{
 			currentScenePath = path;
+			if (!Runtime::IsPlayer()) RememberProjectScene(path);
 			LOG("[Scene] Escena '%s' cargada (%zu GameObjects)", path.c_str(), sceneEntities.size());
 		}
+	}
+
+	// El player arranca la simulacion en cuanto la escena esta cargada
+	if (playAfterLoad && pendingLoadPath.empty())
+	{
+		playAfterLoad = false;
+		Play();
 	}
 
 	return true;
@@ -308,9 +379,156 @@ GameObject* Scene::FindByUID(uint64_t uid) const
 	return OwnsObject(it->second) ? it->second : nullptr;
 }
 
-void Scene::SetSelected(GameObject* object)
+// =====================================================================================
+// SELECCION (multiple, estilo Unity)
+// =====================================================================================
+bool Scene::IsSelected(const GameObject* object) const
 {
-	selected = (object != nullptr && OwnsObject(object)) ? object : nullptr;
+	return object != nullptr && std::find(selection.begin(), selection.end(), object) != selection.end();
+}
+
+void Scene::Select(GameObject* object)
+{
+	const bool valid = object != nullptr && OwnsObject(object);
+	if (valid && selection.size() == 1 && selection[0] == object && activeSelected == object) return;
+	if (!valid && selection.empty() && activeSelected == nullptr) return;
+
+	selection.clear();
+	activeSelected = nullptr;
+	if (valid)
+	{
+		selection.push_back(object);
+		activeSelected = object;
+	}
+	++selectionVersion;
+}
+
+void Scene::AddToSelection(GameObject* object)
+{
+	if (object == nullptr || !OwnsObject(object)) return;
+	if (!IsSelected(object)) selection.push_back(object);
+	activeSelected = object;
+	++selectionVersion;
+}
+
+void Scene::RemoveFromSelection(GameObject* object)
+{
+	auto it = std::find(selection.begin(), selection.end(), object);
+	if (it == selection.end()) return;
+	selection.erase(it);
+	if (activeSelected == object) activeSelected = selection.empty() ? nullptr : selection.back();
+	++selectionVersion;
+}
+
+void Scene::ToggleSelection(GameObject* object)
+{
+	if (IsSelected(object)) RemoveFromSelection(object);
+	else AddToSelection(object);
+}
+
+void Scene::SetSelection(const std::vector<GameObject*>& objects, GameObject* active)
+{
+	selection.clear();
+	for (GameObject* object : objects)
+	{
+		if (object != nullptr && OwnsObject(object) && !IsSelected(object)) selection.push_back(object);
+	}
+	activeSelected = (active != nullptr && IsSelected(active)) ? active : (selection.empty() ? nullptr : selection.back());
+	++selectionVersion;
+}
+
+void Scene::ClearSelection()
+{
+	if (selection.empty() && activeSelected == nullptr) return;
+	selection.clear();
+	activeSelected = nullptr;
+	++selectionVersion;
+}
+
+void Scene::SelectAll()
+{
+	std::vector<GameObject*> all;
+	all.reserve(sceneEntities.size());
+	for (const auto& entity : sceneEntities)
+	{
+		if (OwnsObject(entity.get())) all.push_back(entity.get());
+	}
+	SetSelection(all, activeSelected);
+}
+
+std::vector<GameObject*> Scene::GetTopLevelSelection() const
+{
+	std::vector<GameObject*> result;
+	for (GameObject* object : selection)
+	{
+		bool hasSelectedAncestor = false;
+		for (GameObject* other : selection)
+		{
+			if (other != object && object->IsDescendantOf(other))
+			{
+				hasSelectedAncestor = true;
+				break;
+			}
+		}
+		if (!hasSelectedAncestor) result.push_back(object);
+	}
+	return result;
+}
+
+std::vector<uint64_t> Scene::GetSelectionUIDs() const
+{
+	std::vector<uint64_t> uids;
+	uids.reserve(selection.size());
+	for (const GameObject* object : selection) uids.push_back(static_cast<uint64_t>(object->GetUUID()));
+	return uids;
+}
+
+void Scene::SelectByUIDs(const std::vector<uint64_t>& uids, uint64_t activeUID)
+{
+	std::vector<GameObject*> objects;
+	for (uint64_t uid : uids)
+	{
+		if (GameObject* object = FindByUID(uid)) objects.push_back(object);
+	}
+	SetSelection(objects, FindByUID(activeUID));
+}
+
+void Scene::RequestRestoreSnapshot(const std::string& text, const std::vector<uint64_t>& selectionUIDs, uint64_t activeUID)
+{
+	pendingSnapshot = true;
+	snapshotText = text;
+	snapshotSelection = selectionUIDs;
+	snapshotActive = activeUID;
+}
+
+std::vector<GameObject*> Scene::GetCameras() const
+{
+	std::vector<GameObject*> cameras;
+	std::vector<GameObject*> stack(sceneRoot.GetChildren().rbegin(), sceneRoot.GetChildren().rend());
+	while (!stack.empty())
+	{
+		GameObject* node = stack.back();
+		stack.pop_back();
+		if (node->GetComponent<CameraComponent>() != nullptr && OwnsObject(node)) cameras.push_back(node);
+		const std::vector<GameObject*>& children = node->GetChildren();
+		for (auto it = children.rbegin(); it != children.rend(); ++it) stack.push_back(*it);
+	}
+	return cameras;
+}
+
+GameObject* Scene::GetCameraForDisplay(int display) const
+{
+	const auto renders = [display](const GameObject* object)
+	{
+		const CameraComponent* camera = object ? object->GetComponent<CameraComponent>() : nullptr;
+		return camera && camera->IsActive() && object->IsActiveInHierarchy() && camera->targetDisplay == display;
+	};
+	if (renders(gameCameraPtr)) return gameCameraPtr;
+	for (GameObject* camera : GetCameras())
+	{
+		if (renders(camera)) return camera;
+	}
+	return nullptr;
 }
 
 void Scene::SetGameCamera(GameObject* cameraObject)
@@ -396,6 +614,22 @@ GameObject* Scene::CreateCamera(GameObject* parent)
 	auto newObj = std::make_unique<GameObject>(MakeUniqueName("Camera"));
 	newObj->AddComponent(std::make_unique<TransformComponent>(newObj.get()));
 	newObj->AddComponent(std::make_unique<CameraComponent>(newObj.get()));
+
+	// Cada camara nueva va al primer display que no usa ninguna otra (asi se puede ver en la
+	// vista Game eligiendo su display); la primera de la escena es la Main Camera, en el Display 1
+	bool used[CameraComponent::MAX_DISPLAYS] = {};
+	for (const GameObject* camera : GetCameras())
+	{
+		used[camera->GetComponent<CameraComponent>()->targetDisplay] = true;
+	}
+	for (int display = 0; display < CameraComponent::MAX_DISPLAYS; ++display)
+	{
+		if (!used[display])
+		{
+			newObj->GetComponent<CameraComponent>()->targetDisplay = display;
+			break;
+		}
+	}
 
 	GameObject* registered = Register(std::move(newObj), parent);
 
@@ -487,11 +721,7 @@ void Scene::DestroyGameObject(GameObject* target)
 
 	for (GameObject* obj : toDestroy)
 	{
-		if (selected == obj)
-		{
-			SetSelected(nullptr);
-			break;
-		}
+		RemoveFromSelection(obj);
 	}
 
 	// Si la cámara de juego estuviera en el subárbol, desvincularla para no dejar puntero colgante
@@ -590,7 +820,7 @@ GameObject* Scene::DuplicateGameObject(GameObject* target, GameObject* parent)
 
 void Scene::HandleDroppedFile(const std::string& filePath)
 {
-	ImporterManager::HandleDroppedFile(filePath, selected);
+	ImporterManager::HandleDroppedFile(filePath, activeSelected);
 }
 
 void Scene::OnResourcesRemoved(const std::vector<UID>& uids)
@@ -951,6 +1181,12 @@ bool Scene::SaveScene(const std::string& projectPath)
 	}
 
 	currentScenePath = path;
+	if (Project::HasActive())
+	{
+		Project::GetActive().lastModifiedAt = Project::Now();
+		Project::GetActive().lastScene.clear(); // fuerza el guardado de project.json
+	}
+	RememberProjectScene(path);
 	LOG("[Scene] Escena guardada en '%s' (%zu GameObjects)", path.c_str(), sceneEntities.size());
 	return true;
 }
@@ -998,7 +1234,8 @@ void Scene::Play()
 	{
 		// Guardamos el estado inicial para poder recuperarlo al pulsar Stop
 		playModeBackup = SerializeToString();
-		playModeSelection = selected ? static_cast<uint64_t>(selected->GetUUID()) : 0;
+		playModeSelection = GetSelectionUIDs();
+		playModeActive = activeSelected ? static_cast<uint64_t>(activeSelected->GetUUID()) : 0;
 		gameTime = 0.0f;
 		playState = PlayState::Playing;
 		LOG("[Scene] Play: simulacion iniciada (estado de la escena guardado)");

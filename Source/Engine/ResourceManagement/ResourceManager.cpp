@@ -6,6 +6,7 @@
 #include "../Engine.h"
 #include "../FileSystem/FileSystem.h"
 #include "../Scene/Scene.h"
+#include "../Build/BuildManifest.h"
 #include "../../Utils/Log.h"
 #include "../../Utils/PerfTimer.h"
 
@@ -63,6 +64,15 @@ bool ResourceManager::Start()
 {
 	PerfTimer timer;
 	RegisterBuiltInMeshes();
+
+	// Player: no hay Assets/ ni se importa nada; los recursos vienen "cocinados" en la build
+	if (Runtime::IsPlayer())
+	{
+		LoadBuildResources();
+		LOG("[Resources] Build: %zu recursos registrados en %.1f ms", resources.size(), timer.ReadMs());
+		return true;
+	}
+
 	LoadImportCache();
 	RefreshAssets();
 	LOG("[Resources] Assets revisados en %.1f ms: %zu assets (%zu importados a Library ahora), %zu recursos registrados",
@@ -133,6 +143,40 @@ bool ResourceManager::CleanUp()
 	}
 
 	LOG("[Resources] Limpieza: %zu recursos descargados de memoria", unloaded);
+	return true;
+}
+
+bool ResourceManager::LoadBuildResources()
+{
+	std::string text;
+	if (!FileSystem::ReadText(BUILD_RESOURCES_FILE, text))
+	{
+		LOG_ERROR("[Resources] La build no tiene '%s'", BUILD_RESOURCES_FILE);
+		return false;
+	}
+
+	try
+	{
+		const nlohmann::json root = nlohmann::json::parse(text);
+		if (!root.contains("resources") || !root["resources"].is_array()) return false;
+		for (const nlohmann::json& item : root["resources"])
+		{
+			const UID uid = item.value("uid", static_cast<UID>(INVALID_UID));
+			const ResourceType type = ResourceTypeFromString(item.value("type", std::string()));
+			if (uid == INVALID_UID || type == ResourceType::Unknown) continue;
+			if (Resource* resource = CreateOrGetResource(uid, type))
+			{
+				resource->name = item.value("name", std::to_string(uid));
+				resource->assetPath = item.value("asset", std::string());
+				resource->libraryPath = item.value("library", GetLibraryPathFor(type, uid));
+			}
+		}
+	}
+	catch (const std::exception& e)
+	{
+		LOG_ERROR("[Resources] '%s' invalido: %s", BUILD_RESOURCES_FILE, e.what());
+		return false;
+	}
 	return true;
 }
 
@@ -555,6 +599,68 @@ bool ResourceManager::DeleteFolder(const std::string& path)
 
 	if (FileSystem::IsInsideFolder(importFolder, folder)) importFolder = FileSystem::ASSETS_DIR;
 	return FileSystem::RemoveFolder(folder);
+}
+
+bool ResourceManager::RenameAsset(const std::string& fromPath, const std::string& toPath)
+{
+	const std::string from = FileSystem::Normalize(fromPath);
+	const std::string to = FileSystem::Normalize(toPath);
+	if (from == to) return true;
+	if (!FileSystem::IsInsideFolder(from, FileSystem::ASSETS_DIR) || from == FileSystem::ASSETS_DIR) return false;
+	if (!FileSystem::IsInsideFolder(to, FileSystem::ASSETS_DIR) || FileSystem::Exists(to)) return false;
+	if (FileSystem::IsInsideFolder(to, from)) return false; // una carpeta dentro de si misma
+
+	const bool isFolder = FileSystem::IsDirectory(from);
+	if (!FileSystem::Rename(from, to))
+	{
+		LOG_ERROR("[Resources] Could not rename '%s' to '%s'", from.c_str(), to.c_str());
+		return false;
+	}
+	// El .meta acompana al fichero (guarda los UID: asi las escenas siguen funcionando)
+	if (!isFolder && FileSystem::Exists(GetMetaPath(from))) FileSystem::Rename(GetMetaPath(from), GetMetaPath(to));
+
+	// Se actualizan las rutas registradas (de un fichero o de todo lo que habia dentro de la carpeta)
+	const auto remap = [&](const std::string& path) -> std::string
+	{
+		if (path == from) return to;
+		if (isFolder && FileSystem::IsInsideFolder(path, from)) return to + path.substr(from.size());
+		return std::string();
+	};
+
+	std::vector<std::pair<std::string, std::string>> moved;
+	for (const auto& entry : assets)
+	{
+		const std::string newPath = remap(entry.first);
+		if (!newPath.empty()) moved.emplace_back(entry.first, newPath);
+	}
+	for (const auto& [oldPath, newPath] : moved)
+	{
+		AssetRecord record = assets[oldPath];
+		assets.erase(oldPath);
+		assets[newPath] = record;
+
+		auto cacheIt = importCache.find(oldPath);
+		if (cacheIt != importCache.end())
+		{
+			importCache[newPath] = cacheIt->second;
+			importCache.erase(cacheIt);
+		}
+
+		std::vector<UID> uids = record.subResources;
+		uids.push_back(record.uid);
+		for (UID uid : uids)
+		{
+			auto it = resources.find(uid);
+			if (it != resources.end()) it->second->assetPath = newPath;
+		}
+	}
+	if (isFolder && FileSystem::IsInsideFolder(importFolder, from)) importFolder = to + importFolder.substr(from.size());
+
+	cacheDirty = true;
+	SaveImportCache();
+	cacheDirty = false;
+	LOG("[Resources] Renamed '%s' -> '%s'", from.c_str(), to.c_str());
+	return true;
 }
 
 void ResourceManager::RemoveResources(const std::vector<UID>& uids, bool deleteLibraryFiles)

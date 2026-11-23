@@ -8,6 +8,7 @@
 #include <glm/glm.hpp>
 #include <array>
 #include <vector>
+#include <unordered_set>
 
 class GameObject;
 
@@ -85,6 +86,9 @@ public:
 	int GetGameViewportWidth() const { return gameViewportWidth; }
 	int GetGameViewportHeight() const { return gameViewportHeight; }
 	void SetGameViewportVisible(bool visible) { gameViewportVisible = visible; }
+	// Display que muestra la vista Game (0 = Display 1): se dibuja la camara que apunta a el
+	void SetGameDisplay(int display) { gameDisplay = display; }
+	int GetGameDisplay() const { return gameDisplay; }
 	bool IsGameViewportVisible() const { return gameViewportVisible; }
 
 	// Aspect ratio de la vista Game (lo usa tambien el frustum de la Main Camera en la vista Scene)
@@ -118,6 +122,7 @@ private:
 
 	// Framebuffer de la vista Game
 	bool gameViewportVisible = true;
+	int gameDisplay = 0;
 	unsigned int gameFramebuffer = 0;
 	unsigned int gameTextureColorbuffer = 0;
 	unsigned int gameDepthTextureBuffer = 0;
@@ -163,13 +168,22 @@ private:
 	int debugLineViewProjection = -1;
 
 	// Rejilla de referencia (Grid) y Ejes centrales (Axis) en buffers estáticos persistentes
-	unsigned int gridVAO = 0;
-	unsigned int gridVBO = 0;
-	int gridVertexCount = 0;
+	// Ahora es una rejilla infinita (shader sobre un cuadrado a pantalla completa, como Unity):
+	// lineas cada 1 / 10 / 100... unidades segun la distancia, que se desvanecen a lo lejos, y los
+	// ejes X (rojo) y Z (azul) marcados sobre el plano
+	unsigned int gridProgram = 0;
+	struct GridUniforms
+	{
+		int invViewProjection = -1, viewProjection = -1, planeAxis = -1, fadeOrigin = -1;
+		int fadeDistance = -1, lodHeight = -1, showGrid = -1, showAxis = -1;
+	} gu;
 
-	unsigned int axisVAO = 0;
-	unsigned int axisVBO = 0;
-	int axisVertexCount = 0;
+	// Objetos seleccionados y sus descendientes (contorno de seleccion). Se rellena una vez por frame.
+	std::unordered_set<const GameObject*> highlightObjects;
+	const GameObject* highlightActive = nullptr; // objeto activo de la seleccion (contorno mas intenso)
+	bool IsHighlighted(const GameObject* go) const;
+	void BuildHighlightSet();
+	void DrawShadedWireframe(const std::vector<GameObject*>& objects, const glm::mat4& view, const glm::mat4& projection);
 
 	void CreateGridAndAxisBuffers();
 	void DestroyGridAndAxisBuffers();
@@ -207,5 +221,5 @@ private:
 	void DrawDebug(const glm::mat4& view, const glm::mat4& projection);
 	void CollectNormals(GameObject* go, const glm::mat4& parentMatrix);
 	void AppendNormals(GameObject* go, const glm::mat4& worldMatrix);
-	void DrawSelectionOutline(GameObject* selected, const glm::mat4& view, const glm::mat4& projection);
+	void DrawSelectionOutline(const glm::mat4& view, const glm::mat4& projection);
 };

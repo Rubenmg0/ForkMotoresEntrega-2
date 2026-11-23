@@ -11,6 +11,14 @@ enum class NormalsMode
 	Both
 };
 
+// Modo de dibujo de la vista Scene (menu "Shading Mode" de la vista Scene, como en Unity)
+enum class ShadingMode
+{
+	Shaded = 0,
+	Wireframe,
+	ShadedWireframe
+};
+
 // Única fuente de verdad de las opciones de render. El Editor las edita a través de
 // Render::SetSettings(); nadie más guarda copias persistentes de estos valores.
 struct RenderSettings
@@ -18,7 +26,7 @@ struct RenderSettings
 	bool depthTest = true;
 	bool cullFace = true;
 	bool lighting = true;
-	bool wireframe = false;
+	ShadingMode shading = ShadingMode::Shaded;
 	bool vsync = true;
 
 	bool showDepthBuffer = false;

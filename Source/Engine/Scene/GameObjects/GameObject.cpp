@@ -148,6 +148,37 @@ bool GameObject::IsActiveInHierarchy() const
     return true;
 }
 
+int GameObject::GetSiblingIndex() const
+{
+    if (parent == nullptr) return 0;
+    const auto& siblings = parent->children;
+    const auto it = std::find(siblings.begin(), siblings.end(), this);
+    return (it == siblings.end()) ? 0 : static_cast<int>(it - siblings.begin());
+}
+
+void GameObject::SetSiblingIndex(int index)
+{
+    if (parent == nullptr) return;
+    auto& siblings = parent->children;
+    const auto it = std::find(siblings.begin(), siblings.end(), this);
+    if (it == siblings.end()) return;
+    siblings.erase(it);
+    index = std::clamp(index, 0, static_cast<int>(siblings.size()));
+    siblings.insert(siblings.begin() + index, this);
+}
+
+bool GameObject::SetParent(GameObject* newParent, bool keepWorldTransform, int siblingIndex)
+{
+    if (newParent == parent)
+    {
+        if (siblingIndex >= 0) SetSiblingIndex(siblingIndex);
+        return true;
+    }
+    if (!SetParent(newParent, keepWorldTransform)) return false;
+    if (siblingIndex >= 0) SetSiblingIndex(siblingIndex);
+    return true;
+}
+
 bool GameObject::SetParent(GameObject* newParent, bool keepWorldTransform)
 {
     if (newParent == parent) return true;

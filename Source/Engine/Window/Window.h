@@ -65,7 +65,7 @@ private:
 	// OpenGL context
 	SDL_GLContext glContext = nullptr;
 
-	std::string title = "Motor Videojuego";
+	std::string title = "Maruja Engine";
 	int windowWidth = 1280;
 	int windowHeight = 780;
 	int windowScale = 1;

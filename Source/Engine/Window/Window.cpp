@@ -1,5 +1,6 @@
 #include "Window.h"
 #include "../../Utils/Log.h"
+#include "../Build/BuildManifest.h"
 #include <glad/glad.h>
 
 Window::Window() : Module()
@@ -43,11 +44,27 @@ bool Window::Awake()
 	// Create window
 	Uint32 flags = SDL_WINDOW_OPENGL;
 
+	// Player (build de un juego): titulo, tamano y modo de ventana del Player Settings de la build
+	bool playerFullscreen = false;
+	bool playerResizable = true;
+	if (Runtime::IsPlayer())
+	{
+		const BuildManifest& build = Runtime::GetBuild();
+		title = build.productName;
+		windowWidth = SDL_max(build.window.width, 320);
+		windowHeight = SDL_max(build.window.height, 240);
+		playerFullscreen = build.window.fullscreen;
+		playerResizable = build.window.resizable;
+	}
+	// Batch (build por linea de comandos): la ventana existe para tener contexto OpenGL, pero no se ve
+	if (Runtime::IsBatch()) flags |= SDL_WINDOW_HIDDEN;
+	if (playerFullscreen) flags |= SDL_WINDOW_FULLSCREEN;
+
 #ifdef WINDOW_FULLSCREEN
 	flags |= SDL_WINDOW_FULLSCREEN;
 #endif
 
-	flags |= SDL_WINDOW_RESIZABLE;
+	if (playerResizable) flags |= SDL_WINDOW_RESIZABLE;
 
 	window = SDL_CreateWindow(title.c_str(), windowWidth, windowHeight, flags);
 
@@ -59,10 +76,13 @@ bool Window::Awake()
 
 	LOG("[SDL3] Ventana creada con éxito (%dx%d, flags: 0x%X)", windowWidth, windowHeight, flags);
 
-	SDL_SetWindowMinimumSize(window, MIN_WIDTH, MIN_HEIGHT);
+	if (!Runtime::IsPlayer()) SDL_SetWindowMinimumSize(window, MIN_WIDTH, MIN_HEIGHT);
 	SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
-	SDL_ShowWindow(window);
-	SDL_RaiseWindow(window);
+	if (!Runtime::IsBatch())
+	{
+		SDL_ShowWindow(window);
+		SDL_RaiseWindow(window);
+	}
 	RefreshSize();
 
 	// Open GL context
@@ -80,7 +100,7 @@ bool Window::Awake()
 	}
 
 	LOG("[OpenGL] Contexto OpenGL 4.6 Core Profile creado exitosamente.");
-	SDL_GL_SetSwapInterval(1);
+	SDL_GL_SetSwapInterval((Runtime::IsPlayer() && !Runtime::GetBuild().window.vsync) ? 0 : 1);
 
 	// Start GLAD (Load OpenGL Functions with GLAD)
 	LOG("[GLAD] Cargando punteros de funciones OpenGL...");
