@@ -63,6 +63,11 @@ public:
 	// keepWorldTransform = true: el objeto se queda donde estaba en el mundo (reemparentar en la
 	// jerarquia). false: se conserva su transform LOCAL (crear hijos, instanciar modelos, cargar escenas).
 	bool SetParent(GameObject* newParent, bool keepWorldTransform = true);
+	// Igual, pero colocandolo en la posicion 'siblingIndex' entre los hijos del nuevo padre (-1 = al final)
+	bool SetParent(GameObject* newParent, bool keepWorldTransform, int siblingIndex);
+	// Posicion entre sus hermanos (orden de la Hierarchy; se guarda en la escena)
+	int GetSiblingIndex() const;
+	void SetSiblingIndex(int index);
 	bool AddChild(GameObject* child);
 	void RemoveChild(GameObject* child);
 

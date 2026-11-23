@@ -557,6 +557,68 @@ bool ResourceManager::DeleteFolder(const std::string& path)
 	return FileSystem::RemoveFolder(folder);
 }
 
+bool ResourceManager::RenameAsset(const std::string& fromPath, const std::string& toPath)
+{
+	const std::string from = FileSystem::Normalize(fromPath);
+	const std::string to = FileSystem::Normalize(toPath);
+	if (from == to) return true;
+	if (!FileSystem::IsInsideFolder(from, FileSystem::ASSETS_DIR) || from == FileSystem::ASSETS_DIR) return false;
+	if (!FileSystem::IsInsideFolder(to, FileSystem::ASSETS_DIR) || FileSystem::Exists(to)) return false;
+	if (FileSystem::IsInsideFolder(to, from)) return false; // una carpeta dentro de si misma
+
+	const bool isFolder = FileSystem::IsDirectory(from);
+	if (!FileSystem::Rename(from, to))
+	{
+		LOG_ERROR("[Resources] Could not rename '%s' to '%s'", from.c_str(), to.c_str());
+		return false;
+	}
+	// El .meta acompana al fichero (guarda los UID: asi las escenas siguen funcionando)
+	if (!isFolder && FileSystem::Exists(GetMetaPath(from))) FileSystem::Rename(GetMetaPath(from), GetMetaPath(to));
+
+	// Se actualizan las rutas registradas (de un fichero o de todo lo que habia dentro de la carpeta)
+	const auto remap = [&](const std::string& path) -> std::string
+	{
+		if (path == from) return to;
+		if (isFolder && FileSystem::IsInsideFolder(path, from)) return to + path.substr(from.size());
+		return std::string();
+	};
+
+	std::vector<std::pair<std::string, std::string>> moved;
+	for (const auto& entry : assets)
+	{
+		const std::string newPath = remap(entry.first);
+		if (!newPath.empty()) moved.emplace_back(entry.first, newPath);
+	}
+	for (const auto& [oldPath, newPath] : moved)
+	{
+		AssetRecord record = assets[oldPath];
+		assets.erase(oldPath);
+		assets[newPath] = record;
+
+		auto cacheIt = importCache.find(oldPath);
+		if (cacheIt != importCache.end())
+		{
+			importCache[newPath] = cacheIt->second;
+			importCache.erase(cacheIt);
+		}
+
+		std::vector<UID> uids = record.subResources;
+		uids.push_back(record.uid);
+		for (UID uid : uids)
+		{
+			auto it = resources.find(uid);
+			if (it != resources.end()) it->second->assetPath = newPath;
+		}
+	}
+	if (isFolder && FileSystem::IsInsideFolder(importFolder, from)) importFolder = to + importFolder.substr(from.size());
+
+	cacheDirty = true;
+	SaveImportCache();
+	cacheDirty = false;
+	LOG("[Resources] Renamed '%s' -> '%s'", from.c_str(), to.c_str());
+	return true;
+}
+
 void ResourceManager::RemoveResources(const std::vector<UID>& uids, bool deleteLibraryFiles)
 {
 	if (uids.empty()) return;

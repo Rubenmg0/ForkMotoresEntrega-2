@@ -79,9 +79,10 @@ static unsigned int BuildProgram(const char* vertexSource, const char* fragmentS
 Render::Render() : Module()
 {
 	name = "render";
-	background.r = 0;
-	background.g = 0;
-	background.b = 125;
+	// Gris azulado neutro (como el cielo por defecto de la vista Scene de Unity)
+	background.r = 72;
+	background.g = 77;
+	background.b = 86;
 	background.a = 255;
 }
 
@@ -367,92 +368,116 @@ bool Render::Start() {
 
 void Render::CreateGridAndAxisBuffers()
 {
-	// Cuadrícula en el plano XZ de -50 a +50 con paso 1.0
-	std::vector<float> gridVerts;
-	gridVerts.reserve((101 + 101) * 2 * 3);
-
-	constexpr int GRID_RANGE = 50;
-	for (int i = -GRID_RANGE; i <= GRID_RANGE; ++i)
+	// ---------------------------------------------------------------------------------
+	// Rejilla infinita (estilo Unity). Se dibuja un cuadrado que cubre toda la pantalla; para cada
+	// pixel se reconstruye el rayo de la camara (deshaciendo view y projection) y se corta con el
+	// plano de la rejilla. Las lineas se calculan con derivadas de pantalla (fwidth), asi miden
+	// siempre ~1 pixel, y el espaciado cambia (1, 10, 100...) segun la distancia al plano.
+	// ---------------------------------------------------------------------------------
+	const char* gridVS = R"(#version 460 core
+	layout (location = 0) in vec2 aPos;
+	uniform mat4 invViewProjection;
+	out vec3 nearPoint;
+	out vec3 farPoint;
+	vec3 Unproject(vec3 p)
 	{
-		const float coord = static_cast<float>(i);
-		// Líneas paralelas a Z (avanzan en X)
-		gridVerts.push_back(coord); gridVerts.push_back(0.0f); gridVerts.push_back(-static_cast<float>(GRID_RANGE));
-		gridVerts.push_back(coord); gridVerts.push_back(0.0f); gridVerts.push_back(static_cast<float>(GRID_RANGE));
+		vec4 r = invViewProjection * vec4(p, 1.0);
+		return r.xyz / r.w;
+	}
+	void main()
+	{
+		nearPoint = Unproject(vec3(aPos, -1.0));
+		farPoint = Unproject(vec3(aPos, 1.0));
+		gl_Position = vec4(aPos, 0.0, 1.0);
+	})";
 
-		// Líneas paralelas a X (avanzan en Z)
-		gridVerts.push_back(-static_cast<float>(GRID_RANGE)); gridVerts.push_back(0.0f); gridVerts.push_back(coord);
-		gridVerts.push_back(static_cast<float>(GRID_RANGE));  gridVerts.push_back(0.0f); gridVerts.push_back(coord);
+	const char* gridFS = R"(#version 460 core
+	in vec3 nearPoint;
+	in vec3 farPoint;
+	out vec4 FragColor;
+	uniform mat4 viewProjection;
+	uniform int planeAxis;      // 0: plano XZ (normal Y) | 1: plano XY (normal Z) | 2: plano ZY (normal X)
+	uniform vec3 fadeOrigin;    // punto desde el que se desvanece la rejilla
+	uniform float fadeDistance;
+	uniform float lodHeight;    // distancia al plano: decide el espaciado de las lineas
+	uniform bool showGrid;
+	uniform bool showAxis;
+
+	// Intensidad de una linea de rejilla de separacion 'spacing' en 'coord' (antialiasing con fwidth)
+	float GridLine(vec2 coord, float spacing)
+	{
+		vec2 c = coord / spacing;
+		vec2 d = fwidth(c);
+		vec2 g = abs(fract(c - 0.5) - 0.5) / max(d, vec2(1e-6));
+		return 1.0 - min(min(g.x, g.y), 1.0);
 	}
 
-	gridVertexCount = static_cast<int>(gridVerts.size() / 3);
+	void main()
+	{
+		vec3 dir = farPoint - nearPoint;
+		float denom = (planeAxis == 0) ? dir.y : ((planeAxis == 1) ? dir.z : dir.x);
+		float origin = (planeAxis == 0) ? nearPoint.y : ((planeAxis == 1) ? nearPoint.z : nearPoint.x);
+		if (abs(denom) < 1e-8) discard;
+		float t = -origin / denom;
+		if (t < 0.0 || t > 1.0) discard;
 
-	glGenVertexArrays(1, &gridVAO);
-	glGenBuffers(1, &gridVBO);
-	glBindVertexArray(gridVAO);
-	glBindBuffer(GL_ARRAY_BUFFER, gridVBO);
-	glBufferData(GL_ARRAY_BUFFER, gridVerts.size() * sizeof(float), gridVerts.data(), GL_STATIC_DRAW);
-	glEnableVertexAttribArray(0);
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-	glBindVertexArray(0);
-	glBindBuffer(GL_ARRAY_BUFFER, 0);
+		vec3 p = nearPoint + t * dir;
+		vec2 coord = (planeAxis == 0) ? p.xz : ((planeAxis == 1) ? p.xy : p.zy);
 
-	// Ejes divididos en Negativo y Positivo (Escalados a 5.0)
-	std::vector<float> axisVerts = {
-		// --- EJE X ---
-		-5.0f, 0.0005f, 0.0f,   // 0: X Negativo (Inicio)
-		 0.0f, 0.0005f, 0.0f,   // 1: X Centro
-		 0.0f, 0.0005f, 0.0f,   // 2: X Centro
-		 5.0f, 0.0005f, 0.0f,   // 3: X Positivo (Fin)
+		// Profundidad del punto del plano: los objetos tapan la rejilla
+		vec4 clip = viewProjection * vec4(p, 1.0);
+		gl_FragDepth = (clip.z / clip.w) * 0.5 + 0.5;
 
-		 // --- EJE Y ---
-		  0.0f,  0.0f,   0.0f,   // 4: Y Centro (Origen)
-		  0.0f,  5.0f,   0.0f,   // 5: Y Positivo (Fin)
+		// Nivel de detalle: separacion 10^n, mezclando suavemente con el nivel siguiente
+		float lod = max(0.0, log(max(lodHeight, 1e-3)) / log(10.0) - 0.35);
+		float spacing = pow(10.0, floor(lod));
+		float blend = fract(lod);
 
-		  // --- EJE Z ---
-		   0.0f, 0.0005f, -5.0f,  // 6: Z Negativo (Inicio)
-		   0.0f, 0.0005f,  0.0f,  // 7: Z Centro
-		   0.0f, 0.0005f,  0.0f,  // 8: Z Centro
-		   0.0f, 0.0005f,  5.0f,  // 9: Z Positivo (Fin)
+		// Las lineas finas se desvanecen antes que las gruesas (menos ruido a lo lejos)
+		float minorFade = 1.0 - smoothstep(fadeDistance * 0.08, fadeDistance * 0.35, length(p - fadeOrigin));
+		float minor = GridLine(coord, spacing) * (1.0 - blend) * minorFade;
+		float major = GridLine(coord, spacing * 10.0);
+		float alpha = showGrid ? max(minor * 0.30, major * 0.50) : 0.0;
+		vec3 color = vec3(0.62);
 
-		   // --- MARCAS / FLECHAS EN LOS EXTREMOS POSITIVOS (Proporcionales) ---
-		   // Flecha X+ (punta en 5.0, base en 4.5)
-			5.0f, 0.0005f,  0.0f,    4.5f, 0.0005f,  0.25f,
-			5.0f, 0.0005f,  0.0f,    4.5f, 0.0005f, -0.25f,
+		// Ejes sobre el plano. coord.x recorre el primer eje del plano y coord.y el segundo:
+		//   XZ -> X rojo, Z azul | XY -> X rojo, Y verde | ZY -> Z azul, Y verde
+		if (showAxis)
+		{
+			vec2 d = fwidth(coord);
+			float alongFirst = 1.0 - min(abs(coord.y) / max(d.y, 1e-6) * 0.7, 1.0);  // linea coord.y == 0
+			float alongSecond = 1.0 - min(abs(coord.x) / max(d.x, 1e-6) * 0.7, 1.0); // linea coord.x == 0
+			vec3 red = vec3(0.90, 0.30, 0.30);
+			vec3 green = vec3(0.40, 0.80, 0.30);
+			vec3 blue = vec3(0.30, 0.50, 0.95);
+			vec3 firstColor = (planeAxis == 2) ? blue : red;
+			vec3 secondColor = (planeAxis == 0) ? blue : green;
+			if (alongFirst > 0.0) { color = mix(color, firstColor, alongFirst); alpha = max(alpha, alongFirst * 0.9); }
+			if (alongSecond > 0.0) { color = mix(color, secondColor, alongSecond); alpha = max(alpha, alongSecond * 0.9); }
+		}
 
-			// Flecha Y+ (punta en 5.0, base en 4.5)
-			 0.0f,  5.0f,    0.0f,    0.25f,  4.5f,   0.0f,
-			 0.0f,  5.0f,    0.0f,   -0.25f,  4.5f,   0.0f,
+		// Se desvanece con la distancia
+		float dist = length(p - fadeOrigin);
+		float fade = 1.0 - smoothstep(fadeDistance * 0.35, fadeDistance, dist);
+		alpha *= fade;
+		if (alpha < 0.01) discard;
+		FragColor = vec4(color, alpha);
+	})";
 
-			 // Flecha Z+ (punta en 5.0, base en 4.5)
-			  0.0f, 0.0005f,  5.0f,    0.25f, 0.0005f,  4.5f,
-			  0.0f, 0.0005f,  5.0f,   -0.25f, 0.0005f,  4.5f
-	};
-
-	axisVertexCount = static_cast<int>(axisVerts.size() / 3);
-
-	glGenVertexArrays(1, &axisVAO);
-	glGenBuffers(1, &axisVBO);
-	glBindVertexArray(axisVAO);
-	glBindBuffer(GL_ARRAY_BUFFER, axisVBO);
-	glBufferData(GL_ARRAY_BUFFER, axisVerts.size() * sizeof(float), axisVerts.data(), GL_STATIC_DRAW);
-	glEnableVertexAttribArray(0);
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-	glBindVertexArray(0);
-	glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-	LOG("[Render] Buffers estáticos creados para Grid (%d vértices) y Axis (%d vértices)",
-		gridVertexCount, axisVertexCount);
+	gridProgram = BuildProgram(gridVS, gridFS, "InfiniteGrid");
+	gu.invViewProjection = glGetUniformLocation(gridProgram, "invViewProjection");
+	gu.viewProjection = glGetUniformLocation(gridProgram, "viewProjection");
+	gu.planeAxis = glGetUniformLocation(gridProgram, "planeAxis");
+	gu.fadeOrigin = glGetUniformLocation(gridProgram, "fadeOrigin");
+	gu.fadeDistance = glGetUniformLocation(gridProgram, "fadeDistance");
+	gu.lodHeight = glGetUniformLocation(gridProgram, "lodHeight");
+	gu.showGrid = glGetUniformLocation(gridProgram, "showGrid");
+	gu.showAxis = glGetUniformLocation(gridProgram, "showAxis");
 }
 
 void Render::DestroyGridAndAxisBuffers()
 {
-	if (gridVBO != 0) { glDeleteBuffers(1, &gridVBO); gridVBO = 0; }
-	if (gridVAO != 0) { glDeleteVertexArrays(1, &gridVAO); gridVAO = 0; }
-	gridVertexCount = 0;
-
-	if (axisVBO != 0) { glDeleteBuffers(1, &axisVBO); axisVBO = 0; }
-	if (axisVAO != 0) { glDeleteVertexArrays(1, &axisVAO); axisVAO = 0; }
-	axisVertexCount = 0;
+	if (gridProgram != 0) { glDeleteProgram(gridProgram); gridProgram = 0; }
 }
 
 void Render::DrawGridAndAxis(const glm::mat4& view, const glm::mat4& projection)
@@ -462,53 +487,73 @@ void Render::DrawGridAndAxis(const glm::mat4& view, const glm::mat4& projection)
 #endif
 
 	if (!settings.showGrid && !settings.showAxis) return;
+	if (gridProgram == 0 || depthDebugVAO == 0) return;
 
-	glUseProgram(lineShaderProgram);
-	glUniformMatrix4fv(lu.view, 1, GL_FALSE, glm::value_ptr(view));
-	glUniformMatrix4fv(lu.projection, 1, GL_FALSE, glm::value_ptr(projection));
-	glUniformMatrix4fv(lu.model, 1, GL_FALSE, glm::value_ptr(glm::mat4(1.0f)));
+	Scene* scene = Engine::GetInstance().scene.get();
+	GameObject* cameraObj = scene ? scene->GetEditorCameraObject() : nullptr;
+	const CameraComponent* camera = cameraObj ? cameraObj->GetComponent<CameraComponent>() : nullptr;
+	if (camera == nullptr) return;
 
+	// Plano de la rejilla: el suelo (XZ). En las vistas isometricas laterales (Right, Front...) el
+	// suelo se ve de canto, asi que se usa el plano que mira a la camara, como hace Unity.
+	int planeAxis = 0;
+	const glm::vec3 front = camera->GetFront();
+	if (camera->IsOrthographic())
+	{
+		const glm::vec3 a = glm::abs(front);
+		if (a.z > a.y && a.z > a.x) planeAxis = 1;
+		else if (a.x > a.y && a.x > a.z) planeAxis = 2;
+	}
+
+	const glm::vec3 cameraPos = camera->GetWorldPosition();
+	const float halfHeight = camera->GetOrbitDistance() * std::tan(glm::radians(camera->fov) * 0.5f);
+	float lodHeight = 0.0f;
+	glm::vec3 fadeOrigin = cameraPos;
+	float fadeDistance = 0.0f;
+	if (camera->IsOrthographic())
+	{
+		lodHeight = halfHeight * 1.5f;
+		fadeOrigin = camera->GetPivot();
+		fadeDistance = std::max(halfHeight * 12.0f, 20.0f);
+	}
+	else
+	{
+		const float planeCoord = (planeAxis == 0) ? cameraPos.y : ((planeAxis == 1) ? cameraPos.z : cameraPos.x);
+		lodHeight = std::abs(planeCoord);
+		fadeDistance = std::clamp(std::max(lodHeight, camera->GetOrbitDistance()) * 25.0f, 30.0f, std::max(camera->farPlane, 30.0f));
+	}
+
+	const glm::mat4 viewProjection = projection * view;
+	const glm::mat4 inverseViewProjection = glm::inverse(viewProjection);
+
+	glUseProgram(gridProgram);
+	glUniformMatrix4fv(gu.invViewProjection, 1, GL_FALSE, glm::value_ptr(inverseViewProjection));
+	glUniformMatrix4fv(gu.viewProjection, 1, GL_FALSE, glm::value_ptr(viewProjection));
+	glUniform1i(gu.planeAxis, planeAxis);
+	glUniform3fv(gu.fadeOrigin, 1, glm::value_ptr(fadeOrigin));
+	glUniform1f(gu.fadeDistance, fadeDistance);
+	glUniform1f(gu.lodHeight, lodHeight);
+	glUniform1i(gu.showGrid, settings.showGrid ? 1 : 0);
+	glUniform1i(gu.showAxis, settings.showAxis ? 1 : 0);
+
+	// Transparente, con test de profundidad pero sin escribirla (no tapa nada de lo que venga despues)
+	glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+	glDisable(GL_CULL_FACE);
+	glDisable(GL_STENCIL_TEST);
 	glEnable(GL_DEPTH_TEST);
+	glDepthFunc(GL_LEQUAL);
+	glDepthMask(GL_FALSE);
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-	// Dibujar Grid
-	if (settings.showGrid && gridVAO != 0)
-	{
-		glLineWidth(1.0f);
-		glUniform3f(lu.color, 0.32f, 0.32f, 0.35f);
-		glBindVertexArray(gridVAO);
-		glDrawArrays(GL_LINES, 0, gridVertexCount);
-		glBindVertexArray(0);
-	}
+	glBindVertexArray(depthDebugVAO);
+	glDrawArrays(GL_TRIANGLES, 0, 6);
+	glBindVertexArray(0);
 
-	if (settings.showAxis && axisVAO != 0)
-	{
-		glBindVertexArray(axisVAO);
-
-		// --- EJE X ---
-		glLineWidth(2.5f);
-		// X Positivo (Rojo brillante)
-		glUniform3f(lu.color, 0.95f, 0.22f, 0.22f);
-		glDrawArrays(GL_LINES, 2, 2);
-
-		// --- EJE Y (Ya es solo positivo) ---
-		// Y Positivo (Verde brillante)
-		glUniform3f(lu.color, 0.22f, 0.95f, 0.22f);
-		glDrawArrays(GL_LINES, 4, 2);
-
-		// --- EJE Z ---
-		glLineWidth(2.5f);
-		// Z Positivo (Azul brillante)
-		glUniform3f(lu.color, 0.25f, 0.55f, 1.0f);
-		glDrawArrays(GL_LINES, 8, 2);
-
-		// --- FLECHAS DE LOS EXTREMOS POSITIVOS ---
-		glLineWidth(2.0f);
-		glUniform3f(lu.color, 1.0f, 1.0f, 1.0f);
-		glDrawArrays(GL_LINES, 10, 12);
-
-		glBindVertexArray(0);
-		glLineWidth(1.0f);
-	}
+	glDepthMask(GL_TRUE);
+	glDepthFunc(GL_LESS);
+	glDisable(GL_BLEND);
+	if (settings.cullFace) glEnable(GL_CULL_FACE);
 }
 
 void Render::SetViewportSize(int width, int height)
@@ -713,8 +758,10 @@ void Render::RenderScene()
 	if (settings.cullFace) glEnable(GL_CULL_FACE);
 	else glDisable(GL_CULL_FACE);
 
-	if (settings.wireframe) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+	if (settings.shading == ShadingMode::Wireframe) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 	else glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
+	BuildHighlightSet();
 
 	glUseProgram(shaderProgram);
 
@@ -775,6 +822,13 @@ void Render::RenderScene()
 	stats.sceneDrawn = static_cast<int>(visibleObjects.size());
 
 	DrawObjects(visibleObjects, cameraPos);
+	glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
+	// "Shaded Wireframe": las aristas de las mallas encima del sombreado
+	if (settings.shading == ShadingMode::ShadedWireframe)
+	{
+		DrawShadedWireframe(visibleObjects, view, projection);
+	}
 
 	// -------------------------------------------------------------------------
 	// PASE DE LINEARIZACIÓN DEL Z-BUFFER (Para ImGui)
@@ -974,16 +1028,27 @@ void Render::DrawSceneGizmos(const glm::mat4& view, const glm::mat4& projection)
 	}
 
 	// 3) AABB del objeto seleccionado (amarillo, incluye a sus hijos)
-	if (settings.showSelectedAABB && scene->GetSelected())
+	if (settings.showSelectedAABB)
 	{
-		const AABB box = scene->GetSelected()->GetWorldAABB(true);
-		if (box.IsValid()) AddGizmoBox(box.GetCorners(), glm::vec3(1.0f, 0.85f, 0.1f));
+		for (const GameObject* object : scene->GetTopLevelSelection())
+		{
+			const AABB box = object->GetWorldAABB(true);
+			if (box.IsValid()) AddGizmoBox(box.GetCorners(), glm::vec3(1.0f, 0.85f, 0.1f));
+		}
 	}
 
-	// 4) Frustum de la Main Camera (blanco)
+	// 4) Frustum de la Main Camera (blanco) y de las camaras seleccionadas (como en Unity)
 	if (settings.showCameraFrustum && gameCamera && gameFrustum.IsValid())
 	{
 		AddGizmoBox(gameFrustum.GetCorners(), glm::vec3(1.0f, 1.0f, 1.0f));
+	}
+	for (const GameObject* object : scene->GetSelection())
+	{
+		if (object == gameCameraObj && settings.showCameraFrustum) continue;
+		const CameraComponent* selectedCamera = object->GetComponent<CameraComponent>();
+		if (selectedCamera == nullptr || !object->IsActiveInHierarchy()) continue;
+		const Frustum frustum = selectedCamera->GetFrustum(GetGameAspectRatio());
+		if (frustum.IsValid()) AddGizmoBox(frustum.GetCorners(), glm::vec3(0.85f, 0.85f, 0.85f));
 	}
 
 	// 5) Ultimo rayo del mouse picking (magenta)
@@ -1139,10 +1204,7 @@ void Render::DrawSingleGameObject(GameObject* go, const glm::mat4& worldMatrix)
 			glBindTexture(GL_TEXTURE_2D, 0);
 		}
 
-		Scene* scene = Engine::GetInstance().scene.get();
-		GameObject* selectedObj = scene ? scene->GetSelected() : nullptr;
-		bool isSelected = (selectedObj != nullptr && settings.highlightSelection &&
-			(selectedObj == go || go->IsDescendantOf(selectedObj)));
+		const bool isSelected = settings.highlightSelection && IsHighlighted(go);
 
 		// Configurar Stencil para la selección (Aplica tanto a opacos como a transparentes)
 		if (isSelected)
@@ -1175,12 +1237,12 @@ void Render::DrawDebug(const glm::mat4& view, const glm::mat4& projection)
 	GameObject* selected = scene ? scene->GetSelected() : nullptr;
 
 	const bool wantNormals = settings.normals != NormalsMode::None;
-	const bool wantOutline = settings.highlightSelection && selected != nullptr;
+	const bool wantOutline = settings.highlightSelection && !highlightObjects.empty();
 	if (!wantNormals && !wantOutline) return;
 
-	if (wantOutline && selected)
+	if (wantOutline)
 	{
-		DrawSelectionOutline(selected, view, projection);
+		DrawSelectionOutline(view, projection);
 	}
 
 	if (wantNormals)
@@ -1311,13 +1373,69 @@ void Render::AppendNormals(GameObject* go, const glm::mat4& worldMatrix)
 	}
 }
 
-void Render::DrawSelectionOutline(GameObject* selected, const glm::mat4& view, const glm::mat4& projection)
+bool Render::IsHighlighted(const GameObject* go) const
+{
+	return go != nullptr && highlightObjects.find(go) != highlightObjects.end();
+}
+
+void Render::BuildHighlightSet()
+{
+	highlightObjects.clear();
+	highlightActive = nullptr;
+	Scene* scene = Engine::GetInstance().scene.get();
+	if (scene == nullptr) return;
+
+	highlightActive = scene->GetSelected();
+	std::function<void(const GameObject*)> addRecursive = [&](const GameObject* node)
+	{
+		if (node == nullptr || !highlightObjects.insert(node).second) return;
+		for (const GameObject* child : node->GetChildren()) addRecursive(child);
+	};
+	for (const GameObject* object : scene->GetSelection()) addRecursive(object);
+}
+
+void Render::DrawShadedWireframe(const std::vector<GameObject*>& objects, const glm::mat4& view, const glm::mat4& projection)
+{
+	glUseProgram(singleColorShaderProgram);
+	glUniformMatrix4fv(scu.view, 1, GL_FALSE, glm::value_ptr(view));
+	glUniformMatrix4fv(scu.projection, 1, GL_FALSE, glm::value_ptr(projection));
+	glUniform1f(scu.scaleFactor, 1.0f);
+	glUniform3f(scu.color, 0.08f, 0.08f, 0.09f);
+
+	// Las aristas no deben tocar el stencil (lo usa el contorno de seleccion)
+	GLint previousStencilMask = 0xFF;
+	glGetIntegerv(GL_STENCIL_WRITEMASK, &previousStencilMask);
+	glStencilMask(0x00);
+	glDisable(GL_STENCIL_TEST);
+	glEnable(GL_DEPTH_TEST);
+	glDepthFunc(GL_LEQUAL);
+	glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+	glEnable(GL_POLYGON_OFFSET_LINE);
+	glPolygonOffset(-1.0f, -1.0f);
+
+	for (GameObject* go : objects)
+	{
+		if (go == nullptr || !go->IsActive()) continue;
+		MeshComponent* mesh = go->GetComponent<MeshComponent>();
+		if (mesh == nullptr || mesh->GetPrimitive() == nullptr) continue;
+		glUniformMatrix4fv(scu.model, 1, GL_FALSE, glm::value_ptr(go->GetWorldMatrix()));
+		mesh->GetPrimitive()->Draw();
+	}
+
+	glDisable(GL_POLYGON_OFFSET_LINE);
+	glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+	glDepthFunc(GL_LESS);
+	glEnable(GL_STENCIL_TEST);
+	glStencilMask(static_cast<GLuint>(previousStencilMask));
+}
+
+void Render::DrawSelectionOutline(const glm::mat4& view, const glm::mat4& projection)
 {
 #ifdef _DEBUG
 	ZoneScoped;
 #endif
 
-	if (!selected || !selected->IsActive()) return;
+	if (highlightObjects.empty()) return;
 
 	glEnable(GL_STENCIL_TEST);
 	glStencilFunc(GL_NOTEQUAL, 1, 0xFF);
@@ -1329,26 +1447,21 @@ void Render::DrawSelectionOutline(GameObject* selected, const glm::mat4& view, c
 	glUniformMatrix4fv(scu.view, 1, GL_FALSE, glm::value_ptr(view));
 	glUniformMatrix4fv(scu.projection, 1, GL_FALSE, glm::value_ptr(projection));
 	glUniform1f(scu.scaleFactor, 1.03f);
-	glUniform3fv(scu.color, 1, glm::value_ptr(settings.outlineColor));
+	// El objeto activo (y sus hijos) con el color del contorno; el resto de la seleccion algo mas claro
+	const glm::vec3 activeColor = settings.outlineColor;
+	const glm::vec3 otherColor = glm::mix(settings.outlineColor, glm::vec3(1.0f, 0.95f, 0.75f), 0.45f);
 
-	std::function<void(GameObject*)> drawOutlineRecursive = [&](GameObject* node)
-		{
-			if (!node || !node->IsActive()) return;
+	for (const GameObject* node : highlightObjects)
+	{
+		if (!node->IsActiveInHierarchy()) continue;
+		const MeshComponent* mesh = node->GetComponent<MeshComponent>();
+		if (mesh == nullptr || mesh->GetPrimitive() == nullptr) continue;
 
-			MeshComponent* mesh = node->GetComponent<MeshComponent>();
-			if (mesh && mesh->GetPrimitive())
-			{
-				glUniformMatrix4fv(scu.model, 1, GL_FALSE, glm::value_ptr(node->GetWorldMatrix()));
-				mesh->GetPrimitive()->Draw();
-			}
-
-			for (GameObject* child : node->GetChildren())
-			{
-				drawOutlineRecursive(child);
-			}
-		};
-
-	drawOutlineRecursive(selected);
+		const bool inActiveGroup = (highlightActive != nullptr) && (node == highlightActive || node->IsDescendantOf(highlightActive));
+		glUniform3fv(scu.color, 1, glm::value_ptr(inActiveGroup ? activeColor : otherColor));
+		glUniformMatrix4fv(scu.model, 1, GL_FALSE, glm::value_ptr(node->GetWorldMatrix()));
+		mesh->GetPrimitive()->Draw();
+	}
 
 	glEnable(GL_DEPTH_TEST);
 	glDepthFunc(GL_LESS);

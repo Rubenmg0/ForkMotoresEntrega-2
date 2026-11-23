@@ -6,13 +6,33 @@
 #include "../../Scene.h"
 #include "../../JsonHelpers.h"
 #include "../../../../Utils/Log.h"
+#include <glm/gtc/matrix_transform.hpp>
 #include <algorithm>
 #include <cmath>
+
+namespace
+{
+    constexpr float PITCH_LIMIT = 89.9f;
+    constexpr float MIN_DISTANCE = 0.01f;
+    constexpr float MAX_DISTANCE = 100000.0f;
+    constexpr float MIN_FLY_SPEED = 0.05f;
+    constexpr float MAX_FLY_SPEED = 500.0f;
+
+    // Diferencia de angulos (grados) por el camino mas corto: -180..180
+    float ShortestAngle(float from, float to)
+    {
+        float delta = std::fmod(to - from, 360.0f);
+        if (delta > 180.0f) delta -= 360.0f;
+        if (delta < -180.0f) delta += 360.0f;
+        return delta;
+    }
+}
 
 CameraComponent::CameraComponent(GameObject* owner) : Component(COMPONENT_CAMERA, owner)
 {
     transform = owner ? owner->GetComponent<TransformComponent>() : nullptr;
     UpdateCameraVectors();
+    if (transform) pivot = transform->GetPosition() + front * distance;
 }
 
 std::unique_ptr<Component> CameraComponent::Clone(GameObject* newOwner) const
@@ -22,9 +42,12 @@ std::unique_ptr<Component> CameraComponent::Clone(GameObject* newOwner) const
     clone->nearPlane = this->nearPlane;
     clone->farPlane = this->farPlane;
     clone->frustumCulling = this->frustumCulling;
+    clone->orthographic = this->orthographic;
+    clone->orthoSize = this->orthoSize;
     clone->movementSpeed = this->movementSpeed;
     clone->mouseSensitivity = this->mouseSensitivity;
-    clone->orbitDistance = this->orbitDistance;
+    clone->distance = this->distance;
+    clone->pivot = this->pivot;
     clone->yaw = this->yaw;
     clone->pitch = this->pitch;
     clone->UpdateCameraVectors();
@@ -38,6 +61,12 @@ bool CameraComponent::IsEditorCamera() const
     return scene != nullptr && owner == scene->GetEditorCameraObject();
 }
 
+float CameraComponent::GetHalfHeightAtPivot() const
+{
+    const float halfFov = glm::radians(std::clamp(fov, 1.0f, 179.0f)) * 0.5f;
+    return distance * std::tan(halfFov);
+}
+
 void CameraComponent::Update(float dt)
 {
     if (!transform) return;
@@ -45,12 +74,12 @@ void CameraComponent::Update(float dt)
     // Solo la camara del editor se controla con el raton y el teclado
     if (!IsEditorCamera()) return;
 
+    const float dtSeconds = dt / 1000.0f;
     Input* input = Engine::GetInstance().input.get();
-    Scene* scene = Engine::GetInstance().scene.get();
-    GameObject* selectedObject = scene ? scene->GetSelected() : nullptr;
-
     SDL_Window* sdlWindow = Engine::GetInstance().window->GetWindow();
-    bool windowHasFocus = !input->GetWindowEvent(WE_HIDE);
+    const bool windowHasFocus = !input->GetWindowEvent(WE_HIDE);
+
+    if (speedOverlayTime > 0.0f) speedOverlayTime = std::max(0.0f, speedOverlayTime - dtSeconds);
 
     if (!windowHasFocus)
     {
@@ -59,38 +88,53 @@ void CameraComponent::Update(float dt)
             SDL_SetWindowRelativeMouseMode(sdlWindow, false);
             wasRelativeMouseMode = false;
         }
-        isControllingCamera = false;
-        return; // Salimos en este frame si no hay foco
+        navMode = NavMode::None;
+        return;
     }
 
-    bool rmbDown = (input->GetMouseButton(SDL_BUTTON_RIGHT) == KEY_DOWN);
-    bool rmbHeld = (rmbDown || input->GetMouseButton(SDL_BUTTON_RIGHT) == KEY_REPEAT);
-    bool altHeld = (input->GetKey(SDL_SCANCODE_LALT) == KEY_DOWN || input->GetKey(SDL_SCANCODE_LALT) == KEY_REPEAT);
-    bool lmbDown = (input->GetMouseButton(SDL_BUTTON_LEFT) == KEY_DOWN);
-    bool lmbHeld = (lmbDown || input->GetMouseButton(SDL_BUTTON_LEFT) == KEY_REPEAT);
+    const bool alt = input->IsAlt();
+    const bool shift = input->IsShift();
 
-    // Prioridad del gizmo de transformacion sobre la camara:
-    //  - Mientras se arrastra el gizmo, ningun clic empieza a mover la camara.
-    //  - Si el raton esta encima del gizmo, Alt + clic izquierdo lo recibe el gizmo (no se orbita).
-    const bool orbitClick = altHeld && lmbDown && selectedObject != nullptr && !gizmoHovered;
-
-    // Solo iniciamos el control de cámara si el clic comienza dentro del viewport de Scene
-    if ((rmbDown || orbitClick) && viewportHovered && !isControllingCamera && !gizmoInUse)
+    // ---------------------------------------------------------------------------------
+    // 1) Empezar una navegacion: solo si el clic empieza dentro de la vista Scene y no se esta
+    //    arrastrando el gizmo. El clic izquierdo encima del gizmo es siempre del gizmo.
+    // ---------------------------------------------------------------------------------
+    if (navMode == NavMode::None && viewportHovered && !gizmoInUse)
     {
-        isControllingCamera = true;
+        if (input->IsMouseDown(SDL_BUTTON_RIGHT))
+        {
+            navMode = alt ? NavMode::Zoom : NavMode::Fly;
+            navButton = SDL_BUTTON_RIGHT;
+        }
+        else if (input->IsMouseDown(SDL_BUTTON_MIDDLE))
+        {
+            navMode = NavMode::Pan;
+            navButton = SDL_BUTTON_MIDDLE;
+        }
+        else if (input->IsMouseDown(SDL_BUTTON_LEFT) && !gizmoHovered && (alt || handToolActive))
+        {
+            navMode = alt ? NavMode::Orbit : NavMode::Pan;
+            navButton = SDL_BUTTON_LEFT;
+        }
+
+        if (navMode != NavMode::None)
+        {
+            animating = false;
+            flyTime = 0.0f;
+        }
     }
 
-    if (!rmbHeld && !(altHeld && lmbHeld))
+    // Se termina al soltar el boton que la empezo
+    if (navMode != NavMode::None && !input->IsMouseHeld(navButton))
     {
-        isControllingCamera = false;
+        navMode = NavMode::None;
     }
 
-    bool isFreeLooking = isControllingCamera && rmbHeld;
-    bool isOrbiting = isControllingCamera && altHeld && lmbHeld && selectedObject != nullptr;
-    bool activeControl = isFreeLooking || isOrbiting;
-    isControllingCamera = activeControl;
-
-    // Comprobar si la ventana actual sigue teniendo el foco
+    // ---------------------------------------------------------------------------------
+    // 2) Mientras se navega, el raton se oculta y queda fijo (modo relativo de SDL).
+    //    Al soltar vuelve a aparecer donde estaba.
+    // ---------------------------------------------------------------------------------
+    const bool activeControl = (navMode != NavMode::None);
     if (activeControl && !wasRelativeMouseMode)
     {
         SDL_GetMouseState(&lockedMouseX, &lockedMouseY);
@@ -98,75 +142,125 @@ void CameraComponent::Update(float dt)
         SDL_SetWindowRelativeMouseMode(sdlWindow, true);
         wasRelativeMouseMode = true;
     }
-    // Se fuerza la liberación si se pierde el control O la ventana pierde el foco
-    else if ((!activeControl) && wasRelativeMouseMode)
+    else if (!activeControl && wasRelativeMouseMode)
     {
         SDL_SetWindowRelativeMouseMode(sdlWindow, false);
         SDL_WarpMouseInWindow(sdlWindow, lockedMouseX, lockedMouseY);
         wasRelativeMouseMode = false;
-        isControllingCamera = false;
     }
 
-    float currentSpeed = movementSpeed;
-    if (input->GetKey(SDL_SCANCODE_LSHIFT))
-    {
-        currentSpeed *= 2.0f;
-    }
+    const glm::vec2 mouseDelta = activeControl ? input->GetMouseDelta() : glm::vec2(0.0f);
+    const float scroll = input->GetMouseScrollDelta();
 
-    // Rueda del ratón: acercar / alejar la camara en la direccion en la que mira (como Unity).
-    // No se aplica mientras se arrastra el gizmo: moveria la camara a mitad de la manipulacion.
-    if ((viewportHovered || activeControl) && !gizmoInUse)
+    switch (navMode)
     {
-        float scroll = input->GetMouseScrollDelta();
+    case NavMode::Fly:
+    {
+        // Mirar alrededor girando sobre la POSICION de la camara (el pivote se mueve con ella)
+        const glm::vec3 eye = pivot - front * distance;
+        yaw += mouseDelta.x * mouseSensitivity;
+        pitch = std::clamp(pitch - mouseDelta.y * mouseSensitivity, -PITCH_LIMIT, PITCH_LIMIT);
+        UpdateCameraVectors();
+
+        glm::vec3 move(0.0f);
+        if (input->IsKeyHeld(SDL_SCANCODE_W)) move += front;
+        if (input->IsKeyHeld(SDL_SCANCODE_S)) move -= front;
+        if (input->IsKeyHeld(SDL_SCANCODE_D)) move += right;
+        if (input->IsKeyHeld(SDL_SCANCODE_A)) move -= right;
+        if (input->IsKeyHeld(SDL_SCANCODE_E)) move += worldUp;
+        if (input->IsKeyHeld(SDL_SCANCODE_Q)) move -= worldUp;
+
+        glm::vec3 newEye = eye;
+        if (glm::length(move) > 0.0f)
+        {
+            // Aceleracion: cuanto mas tiempo se mantiene la tecla, mas rapido (hasta x2.5)
+            flyTime += dtSeconds;
+            const float acceleration = 1.0f + std::min(flyTime, 3.0f) * 0.5f;
+            const float speed = movementSpeed * acceleration * (shift ? 3.0f : 1.0f);
+            newEye += glm::normalize(move) * speed * dtSeconds;
+        }
+        else
+        {
+            flyTime = 0.0f;
+        }
+
+        // Con el clic derecho pulsado la rueda cambia la velocidad de vuelo (como en Unity)
         if (scroll != 0.0f)
         {
-            transform->SetPosition(transform->GetPosition() + front * (scroll * currentSpeed * 0.5f));
+            movementSpeed = std::clamp(movementSpeed * std::pow(1.2f, scroll), MIN_FLY_SPEED, MAX_FLY_SPEED);
+            speedOverlayTime = 1.5f;
         }
-    }
 
-    // Botón derecho: Free look y WASD
-    if (isFreeLooking)
+        pivot = newEye + front * distance;
+        break;
+    }
+    case NavMode::Orbit:
     {
-        glm::vec2 mouseDelta = input->GetMouseDelta();
         yaw += mouseDelta.x * mouseSensitivity;
-        pitch -= mouseDelta.y * mouseSensitivity;
-        pitch = std::max(-89.0f, std::min(pitch, 89.0f));
-
+        pitch = std::clamp(pitch - mouseDelta.y * mouseSensitivity, -PITCH_LIMIT, PITCH_LIMIT);
         UpdateCameraVectors();
-
-        glm::vec3 pos = transform->GetPosition();
-        float step = currentSpeed * (dt / 1000.0f);
-
-        if (input->GetKey(SDL_SCANCODE_W)) pos += front * step;
-        if (input->GetKey(SDL_SCANCODE_S)) pos -= front * step;
-        if (input->GetKey(SDL_SCANCODE_A)) pos -= right * step;
-        if (input->GetKey(SDL_SCANCODE_D)) pos += right * step;
-        if (input->GetKey(SDL_SCANCODE_E)) pos += worldUp * step;
-        if (input->GetKey(SDL_SCANCODE_Q)) pos -= worldUp * step;
-
-        transform->SetPosition(pos);
+        break;
+    }
+    case NavMode::Pan:
+    {
+        // Unidades del mundo por pixel a la distancia del pivote: el punto bajo el raton lo sigue
+        const float worldPerPixel = (2.0f * GetHalfHeightAtPivot()) / std::max(viewportHeightPx, 1.0f);
+        pivot -= right * (mouseDelta.x * worldPerPixel);
+        pivot += up * (mouseDelta.y * worldPerPixel);
+        break;
+    }
+    case NavMode::Zoom:
+    {
+        const float amount = mouseDelta.x - mouseDelta.y;
+        distance = std::clamp(distance * std::exp(-amount * 0.006f), MIN_DISTANCE, MAX_DISTANCE);
+        break;
+    }
+    case NavMode::None:
+    default:
+        break;
     }
 
-    // Alt + Click Izquierdo: Orbitar alrededor del objeto seleccionado (centro de su AABB)
-    if (isOrbiting && selectedObject)
+    // Rueda: zoom hacia el pivote, proporcional a la distancia (mas lento cuanto mas cerca)
+    if (navMode != NavMode::Fly && scroll != 0.0f && viewportHovered && !gizmoInUse)
     {
-        glm::vec2 mouseDelta = input->GetMouseDelta();
-        yaw += mouseDelta.x * mouseSensitivity;
-        pitch -= mouseDelta.y * mouseSensitivity;
-        pitch = std::max(-89.0f, std::min(pitch, 89.0f));
+        animating = false;
+        distance = std::clamp(distance * std::pow(0.88f, scroll), MIN_DISTANCE, MAX_DISTANCE);
+    }
 
+    UpdateAnimation(dtSeconds);
+    SyncTransform();
+}
+
+void CameraComponent::UpdateAnimation(float dtSeconds)
+{
+    if (!animating) return;
+
+    // Aproximacion exponencial: ~95 % del recorrido en 0.2 s, independiente de los FPS
+    const float t = 1.0f - std::exp(-dtSeconds * 15.0f);
+    pivot += (targetPivot - pivot) * t;
+    distance += (targetDistance - distance) * t;
+    yaw += ShortestAngle(yaw, targetYaw) * t;
+    pitch += (targetPitch - pitch) * t;
+    UpdateCameraVectors();
+
+    const bool done = glm::length(targetPivot - pivot) < 1e-3f * std::max(1.0f, distance) &&
+        std::abs(targetDistance - distance) < 1e-3f * std::max(1.0f, distance) &&
+        std::abs(ShortestAngle(yaw, targetYaw)) < 0.01f && std::abs(targetPitch - pitch) < 0.01f;
+    if (done)
+    {
+        pivot = targetPivot;
+        distance = targetDistance;
+        yaw = targetYaw;
+        pitch = targetPitch;
         UpdateCameraVectors();
-
-        const AABB bounds = selectedObject->GetWorldAABB(true);
-        const glm::vec3 targetPos = bounds.IsValid() ? bounds.GetCenter() : glm::vec3(selectedObject->GetWorldMatrix()[3]);
-        transform->SetPosition(targetPos - (front * orbitDistance));
+        animating = false;
     }
+}
 
-    // Tecla F: Focus en el objeto seleccionado (cuando el viewport está activo)
-    if (viewportHovered && !gizmoInUse && input->GetKeyDown(SDL_SCANCODE_F) && selectedObject)
-    {
-        FocusOnObject(selectedObject);
-    }
+void CameraComponent::SyncTransform()
+{
+    if (!transform) return;
+    transform->SetPosition(pivot - front * distance);
 }
 
 void CameraComponent::UpdateCameraVectors()
@@ -195,9 +289,9 @@ glm::mat4 CameraComponent::GetViewMatrix() const
         return glm::lookAt(camPos, camPos + camForward, camUp);
     }
 
-    // Camara del editor: vectores controlados por el raton (yaw/pitch)
-    glm::vec3 pos = transform->GetPosition();
-    return glm::lookAt(pos, pos + front, up);
+    // Camara del editor: mira al pivote desde 'distance'
+    const glm::vec3 eye = pivot - front * distance;
+    return glm::lookAt(eye, eye + front, up);
 }
 
 glm::mat4 CameraComponent::GetProjectionMatrix(float aspectRatio) const
@@ -207,6 +301,22 @@ glm::mat4 CameraComponent::GetProjectionMatrix(float aspectRatio) const
     const float safeFov = std::clamp(fov, 1.0f, 179.0f);
     const float safeNear = std::max(nearPlane, 0.001f);
     const float safeFar = std::max(farPlane, safeNear + 0.01f);
+
+    if (orthographic)
+    {
+        if (IsEditorCamera())
+        {
+            // Vista isometrica del editor: el alto visible es el que tendria la perspectiva a la
+            // distancia del pivote (asi al alternar Persp / Iso el encuadre casi no cambia). Los
+            // planos van por delante y por detras de la camara: nada se recorta al acercarse.
+            const float halfHeight = std::max(GetHalfHeightAtPivot(), 0.001f);
+            const float halfWidth = halfHeight * safeAspect;
+            return glm::ortho(-halfWidth, halfWidth, -halfHeight, halfHeight, -safeFar, safeFar);
+        }
+        const float halfHeight = std::max(orthoSize, 0.001f);
+        const float halfWidth = halfHeight * safeAspect;
+        return glm::ortho(-halfWidth, halfWidth, -halfHeight, halfHeight, safeNear, safeFar);
+    }
     return glm::perspective(glm::radians(safeFov), safeAspect, safeNear, safeFar);
 }
 
@@ -218,7 +328,7 @@ Frustum CameraComponent::GetFrustum(float aspectRatio) const
 glm::vec3 CameraComponent::GetWorldPosition() const
 {
     if (!transform) return glm::vec3(0.0f);
-    if (IsEditorCamera()) return transform->GetPosition();
+    if (IsEditorCamera()) return pivot - front * distance;
     return glm::vec3(owner->GetWorldMatrix()[3]);
 }
 
@@ -229,6 +339,7 @@ Ray CameraComponent::ScreenPointToRay(float mouseX, float mouseY, float width, f
     const float y = 1.0f - (2.0f * mouseY) / height;
 
     // Deshacemos proyeccion y vista para un punto en el plano cercano y otro en el lejano
+    // (funciona igual con perspectiva y con proyeccion ortografica)
     const glm::mat4 inverseViewProjection = glm::inverse(GetProjectionMatrix(width / height) * GetViewMatrix());
     glm::vec4 nearPoint = inverseViewProjection * glm::vec4(x, y, -1.0f, 1.0f);
     glm::vec4 farPoint = inverseViewProjection * glm::vec4(x, y, 1.0f, 1.0f);
@@ -241,40 +352,92 @@ Ray CameraComponent::ScreenPointToRay(float mouseX, float mouseY, float width, f
 void CameraComponent::FocusOnObject(GameObject* target)
 {
     if (!target || !transform) return;
-    if (Engine::GetInstance().scene)
-    {
-        Engine::GetInstance().scene->SetSelected(target);
-    }
 
     // Encuadramos la AABB del objeto (y de sus hijos); si no tiene malla, su posicion
-    const AABB bounds = target->GetWorldAABB(true);
-    glm::vec3 targetPos = glm::vec3(target->GetWorldMatrix()[3]);
-    if (bounds.IsValid())
+    AABB bounds = target->GetWorldAABB(true);
+    if (!bounds.IsValid())
     {
-        targetPos = bounds.GetCenter();
-        const float radius = glm::length(bounds.GetSize()) * 0.5f;
-        const float halfFov = glm::radians(std::max(fov, 1.0f)) * 0.5f;
-        orbitDistance = std::max(1.0f, radius / std::sin(halfFov));
+        const glm::vec3 position = glm::vec3(target->GetWorldMatrix()[3]);
+        bounds = AABB(position - glm::vec3(1.0f), position + glm::vec3(1.0f));
     }
-    transform->SetPosition(targetPos - (front * orbitDistance));
+    FrameBounds(bounds, true);
+}
+
+void CameraComponent::FrameBounds(const AABB& bounds, bool animate)
+{
+    if (!bounds.IsValid()) return;
+
+    const float radius = std::max(glm::length(bounds.GetSize()) * 0.5f, 0.05f);
+    const float halfFov = glm::radians(std::max(fov, 1.0f)) * 0.5f;
+    const float newDistance = std::clamp(radius / std::sin(halfFov), MIN_DISTANCE, MAX_DISTANCE);
+
+    if (animate)
+    {
+        AnimateTo(bounds.GetCenter(), newDistance, yaw, pitch);
+    }
+    else
+    {
+        pivot = bounds.GetCenter();
+        distance = newDistance;
+        animating = false;
+        SyncTransform();
+    }
+}
+
+void CameraComponent::AnimateTo(const glm::vec3& newPivot, float newDistance, float newYaw, float newPitch)
+{
+    targetPivot = newPivot;
+    targetDistance = std::clamp(newDistance, MIN_DISTANCE, MAX_DISTANCE);
+    targetYaw = newYaw;
+    targetPitch = std::clamp(newPitch, -PITCH_LIMIT, PITCH_LIMIT);
+    animating = true;
+}
+
+void CameraComponent::AlignViewToAxis(const glm::vec3& axisSide, bool animate)
+{
+    if (glm::length(axisSide) < 1e-6f) return;
+
+    // La camara se pone en el lado 'axisSide' del pivote: mira en la direccion contraria
+    const glm::vec3 dir = -glm::normalize(axisSide);
+    float newPitch = glm::degrees(std::asin(std::clamp(dir.y, -1.0f, 1.0f)));
+    newPitch = std::clamp(newPitch, -PITCH_LIMIT, PITCH_LIMIT);
+
+    // Vistas desde arriba / abajo: el yaw no se puede sacar de la direccion. Se usa -90
+    // (mirando hacia -Z), asi la vista Top tiene el eje -Z hacia arriba de la pantalla.
+    float newYaw = (std::abs(dir.y) > 0.99f) ? -90.0f : glm::degrees(std::atan2(dir.z, dir.x));
+    // Se gira por el camino corto desde el yaw actual (sin dar vueltas completas)
+    newYaw = yaw + ShortestAngle(yaw, newYaw);
+
+    if (animate)
+    {
+        AnimateTo(pivot, distance, newYaw, newPitch);
+    }
+    else
+    {
+        yaw = newYaw;
+        pitch = newPitch;
+        animating = false;
+        UpdateCameraVectors();
+        SyncTransform();
+    }
 }
 
 void CameraComponent::ResetCamera()
 {
-    yaw = -90.0f;
-    pitch = 0.0f;
     fov = 45.0f;
+    orthographic = false;
+    pivot = glm::vec3(0.0f);
+    distance = 12.0f;
+    yaw = -135.0f;
+    pitch = -25.0f;
+    animating = false;
     UpdateCameraVectors();
-    if (transform)
-    {
-        transform->SetPosition(glm::vec3(0.0f, 1.0f, 5.0f));
-    }
+    SyncTransform();
 }
 
 void CameraComponent::LookAtFrom(const glm::vec3& position, const glm::vec3& target)
 {
     if (!transform) return;
-    transform->SetPosition(position);
 
     const glm::vec3 direction = target - position;
     if (glm::length(direction) < 1e-6f) return;
@@ -282,20 +445,44 @@ void CameraComponent::LookAtFrom(const glm::vec3& position, const glm::vec3& tar
     // front = (cos(yaw)cos(pitch), sin(pitch), sin(yaw)cos(pitch)) -> despejamos yaw y pitch
     const glm::vec3 dir = glm::normalize(direction);
     pitch = glm::degrees(std::asin(std::clamp(dir.y, -1.0f, 1.0f)));
-    pitch = std::max(-89.0f, std::min(pitch, 89.0f));
+    pitch = std::clamp(pitch, -PITCH_LIMIT, PITCH_LIMIT);
     yaw = glm::degrees(std::atan2(dir.z, dir.x));
+    pivot = target;
+    distance = std::max(glm::length(direction), MIN_DISTANCE);
+    animating = false;
     UpdateCameraVectors();
+    SyncTransform();
 }
 
-void CameraComponent::PerformRaycast(float mX, float mY, float width, float height)
+CameraComponent::EditorViewState CameraComponent::GetEditorViewState() const
 {
-    if (width <= 0.0f || height <= 0.0f || !transform) return;
+    EditorViewState state;
+    state.pivot = pivot;
+    state.distance = distance;
+    state.yaw = yaw;
+    state.pitch = pitch;
+    state.orthographic = orthographic;
+    return state;
+}
 
-    Input* input = Engine::GetInstance().input.get();
-    if (input && (input->GetKey(SDL_SCANCODE_LALT) == KEY_DOWN || input->GetKey(SDL_SCANCODE_LALT) == KEY_REPEAT)) return;
+void CameraComponent::SetEditorViewState(const EditorViewState& state)
+{
+    pivot = state.pivot;
+    distance = std::clamp(state.distance, MIN_DISTANCE, MAX_DISTANCE);
+    yaw = state.yaw;
+    pitch = std::clamp(state.pitch, -PITCH_LIMIT, PITCH_LIMIT);
+    orthographic = state.orthographic;
+    animating = false;
+    UpdateCameraVectors();
+    SyncTransform();
+}
+
+GameObject* CameraComponent::PickAt(float mX, float mY, float width, float height)
+{
+    if (width <= 0.0f || height <= 0.0f || !transform) return nullptr;
 
     Scene* scene = Engine::GetInstance().scene.get();
-    if (!scene) return;
+    if (!scene) return nullptr;
 
     const Ray ray = ScreenPointToRay(mX, mY, width, height);
 
@@ -305,12 +492,7 @@ void CameraComponent::PerformRaycast(float mX, float mY, float width, float heig
 
     // Guardamos el rayo para dibujarlo en la vista Scene (depuracion)
     scene->SetLastPickRay(ray, closestObj ? hitDistance : farPlane);
-
-    scene->SetSelected(closestObj);
-    if (closestObj)
-    {
-        LOG("[Scene] GameObject seleccionado por Raycast: '%s' (distancia %.2f)", closestObj->GetName().c_str(), hitDistance);
-    }
+    return closestObj;
 }
 
 void CameraComponent::Save(nlohmann::json& out) const
@@ -319,6 +501,8 @@ void CameraComponent::Save(nlohmann::json& out) const
     out["near"] = nearPlane;
     out["far"] = farPlane;
     out["frustumCulling"] = frustumCulling;
+    out["orthographic"] = orthographic;
+    out["orthoSize"] = orthoSize;
     out["active"] = active;
 }
 
@@ -328,10 +512,13 @@ void CameraComponent::Load(const nlohmann::json& in)
     JsonHelpers::Read(in, "near", nearPlane);
     JsonHelpers::Read(in, "far", farPlane);
     JsonHelpers::Read(in, "frustumCulling", frustumCulling);
+    JsonHelpers::Read(in, "orthographic", orthographic);
+    JsonHelpers::Read(in, "orthoSize", orthoSize);
 
     fov = std::clamp(fov, 1.0f, 179.0f);
     nearPlane = std::max(nearPlane, 0.001f);
     farPlane = std::max(farPlane, nearPlane + 0.01f);
+    orthoSize = std::max(orthoSize, 0.001f);
 
     bool isActive = true;
     JsonHelpers::Read(in, "active", isActive);

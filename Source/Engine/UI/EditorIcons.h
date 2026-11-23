@@ -21,15 +21,20 @@
 // salirse de el: botones "toggle" activos, cabeceras de componentes, iconos de cada tipo de asset...
 namespace EditorPalette
 {
-	// Color de acento: seleccion, pestana activa, checks, sliders y botones pulsados
-	const ImVec4 ACCENT         = ImVec4(0.16f, 0.50f, 0.93f, 1.00f);
-	const ImVec4 ACCENT_HOVERED = ImVec4(0.27f, 0.60f, 0.98f, 1.00f);
-	const ImVec4 ACCENT_ACTIVE  = ImVec4(0.11f, 0.41f, 0.82f, 1.00f);
+	// Color de acento (azul de Unity): botones activos, foco, drag & drop
+	const ImVec4 ACCENT         = ImVec4(0.227f, 0.475f, 0.733f, 1.00f); // #3A79BB
+	const ImVec4 ACCENT_HOVERED = ImVec4(0.298f, 0.553f, 0.824f, 1.00f);
+	const ImVec4 ACCENT_ACTIVE  = ImVec4(0.173f, 0.365f, 0.529f, 1.00f); // #2C5D87 (seleccion)
 
-	// Superficies "elevadas" (botones, cabeceras plegables) en sus tres estados
-	const ImVec4 RAISED         = ImVec4(0.180f, 0.180f, 0.195f, 1.00f);
-	const ImVec4 RAISED_HOVERED = ImVec4(0.245f, 0.245f, 0.265f, 1.00f);
-	const ImVec4 RAISED_ACTIVE  = ImVec4(0.300f, 0.300f, 0.325f, 1.00f);
+	// Superficies "elevadas" (cabeceras de componentes del Inspector, barras de herramientas)
+	const ImVec4 RAISED         = ImVec4(0.243f, 0.243f, 0.243f, 1.00f); // #3E3E3E
+	const ImVec4 RAISED_HOVERED = ImVec4(0.278f, 0.278f, 0.278f, 1.00f);
+	const ImVec4 RAISED_ACTIVE  = ImVec4(0.310f, 0.310f, 0.310f, 1.00f);
+
+	// Barras de herramientas (toolbar principal y barras de las ventanas)
+	const ImVec4 TOOLBAR_BG     = ImVec4(0.098f, 0.098f, 0.098f, 1.00f); // #191919
+	const ImVec4 PANEL_TOOLBAR  = ImVec4(0.235f, 0.235f, 0.235f, 1.00f); // #3C3C3C
+	const ImVec4 TOGGLE_ON      = ImVec4(0.275f, 0.376f, 0.486f, 1.00f); // boton "pulsado" de Unity
 
 	// Iconos segun el tipo de elemento (ventana Assets y Hierarchy)
 	const ImVec4 ICON_FOLDER    = ImVec4(0.96f, 0.78f, 0.36f, 1.00f);
@@ -81,4 +86,18 @@ namespace EditorIcons
 		drawList->AddText(ImVec2(iconX, position.y), ImGui::GetColorU32(iconColor), icon);
 		drawList->AddText(ImVec2(position.x + cellWidth + gap, position.y), ImGui::GetColorU32(textColor), text);
 	}
+}
+
+// Titulos de las ventanas del editor (icono + nombre). El "###" fija el ID de la ventana: el
+// layout (.ini) y el DockBuilder la reconocen aunque cambie el texto visible.
+namespace EditorWindows
+{
+	constexpr const char* SCENE         = ICON_FA_TABLE_CELLS "  Scene###Scene";
+	constexpr const char* GAME          = ICON_FA_GAMEPAD "  Game###Game";
+	constexpr const char* HIERARCHY     = ICON_FA_LIST "  Hierarchy###Hierarchy";
+	constexpr const char* INSPECTOR     = ICON_FA_CIRCLE_INFO "  Inspector###Inspector";
+	constexpr const char* PROJECT       = ICON_FA_FOLDER "  Project###Project";
+	constexpr const char* CONSOLE       = ICON_FA_TERMINAL "  Console###Console";
+	constexpr const char* RESOURCES     = ICON_FA_DATABASE "  Resources###Resources";
+	constexpr const char* CONFIGURATION = ICON_FA_GEAR "  Configuration###Configuration";
 }

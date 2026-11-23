@@ -74,6 +74,9 @@ public:
 	// pierden la referencia (malla vacia / textura "missing").
 	bool DeleteAsset(const std::string& assetPath);
 	bool DeleteFolder(const std::string& folderPath);
+	// Renombra / mueve un asset (con su .meta) o una carpeta entera dentro de Assets. Los UID no
+	// cambian, asi que los GameObjects que lo usan no se enteran.
+	bool RenameAsset(const std::string& fromPath, const std::string& toPath);
 
 	bool IsAssetImported(const std::string& assetPath) const;
 	UID GetAssetUID(const std::string& assetPath) const;
