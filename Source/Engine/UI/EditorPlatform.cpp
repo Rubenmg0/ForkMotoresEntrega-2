@@ -101,35 +101,121 @@ void EditorPlatform::RevealInExplorer(const std::string& diskPath)
 #endif
 }
 
-bool EditorPlatform::LaunchSelf(const std::vector<std::string>& argsUtf8)
+std::string EditorPlatform::GetExecutablePath()
 {
 #ifdef _WIN32
 	wchar_t exePath[MAX_PATH * 4] = {};
 	const DWORD length = GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
-	if (length == 0 || length >= std::size(exePath))
-	{
-		LOG_ERROR("[Platform] Could not get the executable path");
-		return false;
-	}
+	if (length == 0 || length >= std::size(exePath)) return std::string();
+	std::string result = WideToUtf8(exePath);
+	for (char& c : result) if (c == '\\') c = '/';
+	return result;
+#else
+	const char* basePath = SDL_GetBasePath();
+	return basePath ? std::string(basePath) + "MotorVideojuego" : std::string();
+#endif
+}
 
-	std::wstring commandLine = L"\"" + std::wstring(exePath) + L"\"";
+bool EditorPlatform::LaunchSelf(const std::vector<std::string>& argsUtf8)
+{
+	return LaunchProcess(GetExecutablePath(), argsUtf8, std::string());
+}
+
+bool EditorPlatform::LaunchProcess(const std::string& exePathUtf8, const std::vector<std::string>& argsUtf8, const std::string& workingDirUtf8)
+{
+#ifdef _WIN32
+	const std::wstring exe = Utf8ToWide(exePathUtf8);
+	std::wstring commandLine = L"\"" + exe + L"\"";
 	for (const std::string& argument : argsUtf8) AppendQuotedArgument(commandLine, Utf8ToWide(argument));
+	const std::wstring workingDir = Utf8ToWide(workingDirUtf8);
 
 	STARTUPINFOW startup = {};
 	startup.cb = sizeof(startup);
 	PROCESS_INFORMATION process = {};
-	if (!CreateProcessW(exePath, commandLine.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, &process))
+	if (!CreateProcessW(exe.c_str(), commandLine.data(), nullptr, nullptr, FALSE, 0, nullptr,
+		workingDir.empty() ? nullptr : workingDir.c_str(), &startup, &process))
 	{
-		LOG_ERROR("[Platform] Could not launch a new instance (error %lu)", GetLastError());
+		LOG_ERROR("[Platform] Could not launch '%s' (error %lu)", exePathUtf8.c_str(), GetLastError());
 		return false;
 	}
 	CloseHandle(process.hThread);
 	CloseHandle(process.hProcess);
 	return true;
 #else
-	(void)argsUtf8;
-	LOG_ERROR("[Platform] LaunchSelf is only implemented on Windows");
+	(void)exePathUtf8; (void)argsUtf8; (void)workingDirUtf8;
+	LOG_ERROR("[Platform] LaunchProcess is only implemented on Windows");
 	return false;
+#endif
+}
+
+int EditorPlatform::RunProcessAndWait(const std::string& exePathUtf8, const std::vector<std::string>& argsUtf8,
+	const std::string& workingDirUtf8, std::string* outOutput)
+{
+#ifdef _WIN32
+	const std::wstring exe = Utf8ToWide(exePathUtf8);
+	std::wstring commandLine = L"\"" + exe + L"\"";
+	for (const std::string& argument : argsUtf8) AppendQuotedArgument(commandLine, Utf8ToWide(argument));
+	const std::wstring workingDir = Utf8ToWide(workingDirUtf8);
+
+	// Tuberia para recoger stdout + stderr del proceso hijo
+	SECURITY_ATTRIBUTES security = {};
+	security.nLength = sizeof(security);
+	security.bInheritHandle = TRUE;
+	HANDLE readPipe = nullptr, writePipe = nullptr;
+	if (!CreatePipe(&readPipe, &writePipe, &security, 0)) return -1;
+	SetHandleInformation(readPipe, HANDLE_FLAG_INHERIT, 0);
+
+	STARTUPINFOW startup = {};
+	startup.cb = sizeof(startup);
+	startup.dwFlags = STARTF_USESTDHANDLES;
+	startup.hStdOutput = writePipe;
+	startup.hStdError = writePipe;
+	startup.hStdInput = nullptr;
+	PROCESS_INFORMATION process = {};
+	const BOOL created = CreateProcessW(exe.c_str(), commandLine.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr,
+		workingDir.empty() ? nullptr : workingDir.c_str(), &startup, &process);
+	CloseHandle(writePipe);
+	if (!created)
+	{
+		LOG_ERROR("[Platform] Could not run '%s' (error %lu)", exePathUtf8.c_str(), GetLastError());
+		CloseHandle(readPipe);
+		return -1;
+	}
+
+	std::string output;
+	char buffer[4096];
+	DWORD read = 0;
+	while (ReadFile(readPipe, buffer, sizeof(buffer), &read, nullptr) && read > 0) output.append(buffer, read);
+	CloseHandle(readPipe);
+
+	WaitForSingleObject(process.hProcess, INFINITE);
+	DWORD exitCode = static_cast<DWORD>(-1);
+	GetExitCodeProcess(process.hProcess, &exitCode);
+	CloseHandle(process.hThread);
+	CloseHandle(process.hProcess);
+	if (outOutput) *outOutput = output;
+	return static_cast<int>(exitCode);
+#else
+	(void)exePathUtf8; (void)argsUtf8; (void)workingDirUtf8; (void)outOutput;
+	return -1;
+#endif
+}
+
+std::string EditorPlatform::FindSystemTool(const std::string& fileName)
+{
+#ifdef _WIN32
+	wchar_t systemDir[MAX_PATH] = {};
+	const UINT length = GetSystemDirectoryW(systemDir, MAX_PATH);
+	if (length == 0 || length >= MAX_PATH) return std::string();
+	std::error_code ec;
+	const std::filesystem::path tool = std::filesystem::path(systemDir) / std::filesystem::u8path(fileName);
+	if (!std::filesystem::is_regular_file(tool, ec)) return std::string();
+	std::string result = WideToUtf8(tool.c_str());
+	for (char& c : result) if (c == '\\') c = '/';
+	return result;
+#else
+	(void)fileName;
+	return std::string();
 #endif
 }
 

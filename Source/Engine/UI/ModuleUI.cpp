@@ -21,6 +21,7 @@
 #include "EditorPlatform.h"
 #include "AboutContent.h"
 #include "../Project/ProjectInfo.h"
+#include "../Build/BuildManifest.h"
 #include "Version.h"
 #include "EditorTheme.h"
 #include "EditorWidgets.h"
@@ -104,6 +105,8 @@ bool ModuleUI::Awake()
 
 bool ModuleUI::Start()
 {
+	if (Runtime::IsPlayer()) return StartPlayerUI();
+
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
 	ImGuiIO& io = ImGui::GetIO();
@@ -198,7 +201,7 @@ bool ModuleUI::PreUpdate()
 
 	// Tinte del modo Play (como Unity): se aplica antes de empezar a dibujar el frame
 	const Scene* scene = Engine::GetInstance().scene.get();
-	EditorTheme::SetPlayModeTint(scene != nullptr && scene->IsInPlayMode());
+	if (!Runtime::IsPlayer()) EditorTheme::SetPlayModeTint(scene != nullptr && scene->IsInPlayMode());
 
 	ImGui_ImplOpenGL3_NewFrame();
 	ImGui_ImplSDL3_NewFrame();
@@ -214,6 +217,11 @@ bool ModuleUI::Update(float dt)
 	ZoneScoped;
 #endif
 	(void)dt;
+
+	if (Runtime::IsPlayer()) return UpdatePlayerUI();
+
+	// Build / release pedidas desde Build Settings (se hacen con el aviso "Building..." ya visible)
+	ProcessPendingBuild();
 
 	// Operaciones sobre assets pedidas el frame anterior (borrar, reimportar...)
 	ProcessPendingAssetOperations();
@@ -237,6 +245,7 @@ bool ModuleUI::Update(float dt)
 	DrawDepthBufferPanel();
 	DrawAboutPanel();
 	DrawProjectSettingsPanel();
+	DrawBuildSettingsPanel();
 	DrawMaximizedGameWindow();
 	UpdateWindowTitle();
 
@@ -394,6 +403,9 @@ bool ModuleUI::DrawMainMenuBar()
 			if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S", false, !playing)) openSaveScenePopup = true;
 			if (playing) ImGui::TextDisabled("(Stop Play mode to save)");
 
+			ImGui::Separator();
+			if (ImGui::MenuItem(ICON_FA_HAMMER "  Build Settings...", "Ctrl+Shift+B")) showBuildSettings = true;
+			if (ImGui::MenuItem(ICON_FA_PLAY "  Build And Run", "Ctrl+B", false, !playing)) RequestBuild(true);
 			ImGui::Separator();
 			if (ImGui::MenuItem(ICON_FA_GEAR "  Project Settings...", nullptr, false, Project::HasActive())) showProjectSettings = true;
 			if (ImGui::MenuItem(ICON_FA_CUBES "  Open Hub...", nullptr, false, !playing))
@@ -766,6 +778,8 @@ void ModuleUI::HandleShortcuts()
 	if (ctrl && !shift && pressed(ImGuiKey_Z)) undo.Undo();
 	if (ctrl && ((shift && pressed(ImGuiKey_Z)) || pressed(ImGuiKey_Y))) undo.Redo();
 	if (ctrl && pressed(ImGuiKey_R)) QueueAssetOperation(AssetOperation::Refresh, std::string());
+	if (ctrl && shift && pressed(ImGuiKey_B)) showBuildSettings = true;
+	if (ctrl && !shift && pressed(ImGuiKey_B) && !scene->IsInPlayMode()) RequestBuild(true);
 
 	// Ctrl+1..5: mostrar ventanas
 	if (ctrl && !shift && pressed(ImGuiKey_1)) { showScene = true; ImGui::SetWindowFocus(EditorWindows::SCENE); }

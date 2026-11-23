@@ -12,6 +12,7 @@
 #include "../Render/Primitives/GeometryGenerator.h"
 #include "../FileSystem/FileSystem.h"
 #include "../Project/ProjectInfo.h"
+#include "../Build/BuildManifest.h"
 
 #include "../ResourceManagement/ResourceManager.h"
 #include "../ResourceManagement/ResourceModel.h"
@@ -53,6 +54,16 @@ bool Scene::Awake()
 bool Scene::Start()
 {
 	CreateEditorCamera();
+
+	// Player (build de un juego): se carga la primera escena de la build y se entra en Play
+	if (Runtime::IsPlayer())
+	{
+		const std::string& startScene = Runtime::GetBuild().GetStartScene();
+		LOG("[Scene] Build: escena de arranque '%s'", startScene.c_str());
+		RequestLoadScene(startScene);
+		playAfterLoad = true;
+		return true;
+	}
 
 	// Escena inicial del proyecto:
 	//   1) la ultima escena abierta / guardada (project.json -> lastScene)
@@ -258,9 +269,16 @@ bool Scene::PreUpdate()
 		else
 		{
 			currentScenePath = path;
-			RememberProjectScene(path);
+			if (!Runtime::IsPlayer()) RememberProjectScene(path);
 			LOG("[Scene] Escena '%s' cargada (%zu GameObjects)", path.c_str(), sceneEntities.size());
 		}
+	}
+
+	// El player arranca la simulacion en cuanto la escena esta cargada
+	if (playAfterLoad && pendingLoadPath.empty())
+	{
+		playAfterLoad = false;
+		Play();
 	}
 
 	return true;

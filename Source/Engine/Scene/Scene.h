@@ -210,6 +210,7 @@ private:
 
 	// Escenas
 	std::string currentScenePath;
+	bool playAfterLoad = false; // player: entra en Play tras cargar la escena de arranque
 	std::string pendingLoadPath;
 	bool pendingNewScene = false;
 	bool pendingDefaultScene = false;

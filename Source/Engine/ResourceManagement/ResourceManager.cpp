@@ -6,6 +6,7 @@
 #include "../Engine.h"
 #include "../FileSystem/FileSystem.h"
 #include "../Scene/Scene.h"
+#include "../Build/BuildManifest.h"
 #include "../../Utils/Log.h"
 #include "../../Utils/PerfTimer.h"
 
@@ -63,6 +64,15 @@ bool ResourceManager::Start()
 {
 	PerfTimer timer;
 	RegisterBuiltInMeshes();
+
+	// Player: no hay Assets/ ni se importa nada; los recursos vienen "cocinados" en la build
+	if (Runtime::IsPlayer())
+	{
+		LoadBuildResources();
+		LOG("[Resources] Build: %zu recursos registrados en %.1f ms", resources.size(), timer.ReadMs());
+		return true;
+	}
+
 	LoadImportCache();
 	RefreshAssets();
 	LOG("[Resources] Assets revisados en %.1f ms: %zu assets (%zu importados a Library ahora), %zu recursos registrados",
@@ -133,6 +143,40 @@ bool ResourceManager::CleanUp()
 	}
 
 	LOG("[Resources] Limpieza: %zu recursos descargados de memoria", unloaded);
+	return true;
+}
+
+bool ResourceManager::LoadBuildResources()
+{
+	std::string text;
+	if (!FileSystem::ReadText(BUILD_RESOURCES_FILE, text))
+	{
+		LOG_ERROR("[Resources] La build no tiene '%s'", BUILD_RESOURCES_FILE);
+		return false;
+	}
+
+	try
+	{
+		const nlohmann::json root = nlohmann::json::parse(text);
+		if (!root.contains("resources") || !root["resources"].is_array()) return false;
+		for (const nlohmann::json& item : root["resources"])
+		{
+			const UID uid = item.value("uid", static_cast<UID>(INVALID_UID));
+			const ResourceType type = ResourceTypeFromString(item.value("type", std::string()));
+			if (uid == INVALID_UID || type == ResourceType::Unknown) continue;
+			if (Resource* resource = CreateOrGetResource(uid, type))
+			{
+				resource->name = item.value("name", std::to_string(uid));
+				resource->assetPath = item.value("asset", std::string());
+				resource->libraryPath = item.value("library", GetLibraryPathFor(type, uid));
+			}
+		}
+	}
+	catch (const std::exception& e)
+	{
+		LOG_ERROR("[Resources] '%s' invalido: %s", BUILD_RESOURCES_FILE, e.what());
+		return false;
+	}
 	return true;
 }
 

@@ -1,4 +1,5 @@
 #include "Render.h"
+#include "../Build/BuildManifest.h"
 
 //GLM Math Library
 #include <glm/gtc/matrix_transform.hpp>
@@ -707,6 +708,17 @@ bool Render::Update(float dt)
 	}
 
 	BindDefaultFramebuffer();
+
+	// Player (build de un juego): la imagen de la camara principal ocupa toda la ventana
+	if (Runtime::IsPlayer() && gameFramebuffer != 0 && gameFboComplete)
+	{
+		const int winW = Engine::GetInstance().window->GetWidth();
+		const int winH = Engine::GetInstance().window->GetHeight();
+		glBindFramebuffer(GL_READ_FRAMEBUFFER, gameFramebuffer);
+		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+		glBlitFramebuffer(0, 0, gameFboWidth, gameFboHeight, 0, 0, winW, winH, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	}
 	return true;
 }
 

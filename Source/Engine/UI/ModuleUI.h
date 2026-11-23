@@ -119,6 +119,15 @@ private:
 	void DrawAboutPanel();
 	void DrawDepthBufferPanel();
 
+	// ----------------- Player: build de un juego (PlayerUI.cpp) -----------------
+	bool StartPlayerUI();
+	bool UpdatePlayerUI();
+
+	// ----------------- Build Settings y Releases (EditorBuildWindow.cpp) -----------------
+	void DrawBuildSettingsPanel();
+	void RequestBuild(bool runAfterBuild);
+	void ProcessPendingBuild();
+
 	// ----------------- Proyecto (EditorProjectSettings.cpp) -----------------
 	void DrawProjectSettingsPanel();
 	void UpdateWindowTitle();       // "Maruja Engine 0.4.0 - Proyecto v1.0.0 - Escena"
@@ -179,6 +188,8 @@ private:
 	bool showConfiguration = true;
 	bool showAbout = false;
 	bool showProjectSettings = false;
+	bool showBuildSettings = false;
+	bool showPlayerStats = false;   // player: overlay de estadisticas (Development Build)
 	bool showProject = true;
 	bool showResources = true;
 

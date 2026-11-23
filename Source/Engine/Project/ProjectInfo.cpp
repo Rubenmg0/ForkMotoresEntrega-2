@@ -247,7 +247,9 @@ namespace Project
 			"# Generado por " ENGINE_NAME "\n"
 			"# Library/ es la cache de importacion: se regenera a partir de Assets/ y los .meta\n"
 			"Library/\n"
-			"ProjectSettings/EditorLayout.ini\n");
+			"ProjectSettings/EditorLayout.ini\n"
+			"# Builds y releases del juego (File > Build Settings)\n"
+			"Builds/\n");
 
 		outRoot = root;
 		LOG("[Project] Proyecto '%s' creado en '%s'", name.c_str(), root.c_str());

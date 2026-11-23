@@ -32,7 +32,51 @@ Línea de comandos:
 | `--project <carpeta>` | Abre ese proyecto directamente en el editor |
 | `--no-splash` | Hub sin splash |
 
-Desde el editor, *File > Open Hub...* vuelve al Hub. La versión del motor se define en `CMakeLists.txt` (`project(... VERSION 0.4.0)`) y se genera en `build/generated/Version.h`.
+Desde el editor, *File > Open Hub...* vuelve al Hub.
+
+## 📦 Builds y releases
+
+El motor exporta juegos independientes, como *Build Settings* de Unity, *Export* de Godot o *Package Project* de Unreal. Se hace desde **File > Build Settings...** (`Ctrl+Shift+B`), y **File > Build And Run** (`Ctrl+B`) compila y lanza el juego.
+
+**Pestaña Build**
+- *Scenes In Build*: escenas incluidas, con casilla, orden arrastrando o con flechas, y la **0** como escena de arranque.
+- Plataforma Windows x86_64, opción **Development Build** y carpeta de salida (por defecto `<Proyecto>/Builds`).
+- Botones *Build*, *Build And Run* y *Clean*, más un informe de la última build: ficheros, tamaño, tiempo, avisos y errores, y un log en `Builds/Logs/`.
+
+**Pestaña Player Settings**: nombre del producto, empresa, versión (la del proyecto), resolución, pantalla completa, ventana redimensionable y VSync.
+
+**Pestaña Releases**: crea una release distribuible a partir de la versión del proyecto:
+1. Hace una build Release, sin overlay.
+2. Añade `RELEASE_NOTES.txt` y la comprime en `Builds/Releases/<Producto>-<versión>-win64.zip`.
+3. Calcula el **SHA-256** y lo guarda en `<zip>.sha256`, en el formato de `sha256sum`.
+4. Apunta la release en `ProjectSettings/ReleaseHistory.json` y en `CHANGELOG.md`, con el formato *Keep a Changelog*.
+5. Sube la versión del proyecto: patch, minor o major.
+
+Además, no deja publicar dos veces la misma versión.
+
+Estructura de una build:
+
+```
+Builds/Street Demo/
+├── Street Demo.exe            el mismo binario del motor, que arranca como "player"
+├── *.dll                      SDL3, assimp, DevIL... (y el runtime de VC++ si el motor es Release)
+└── Street Demo_Data/
+    ├── build.json             producto, versión, escenas, ventana, id de build
+    ├── resources.json         recursos cocinados (UID -> fichero de Library)
+    ├── Assets/Scenes/*.scene  solo las escenas de la build
+    └── Library/               solo las mallas y texturas que usan esas escenas
+```
+
+Al arrancar, el ejecutable busca `<nombre>_Data/build.json` a su lado. Si lo encuentra, no abre ni Hub ni editor: carga la escena 0 en modo Play con la cámara principal a toda la ventana. En el juego, `Esc` sale, `F11` o `Alt+Enter` cambian a pantalla completa y, en Development Build, `F1` muestra las estadísticas. Los assets originales (FBX, PNG...) nunca se incluyen.
+
+**Builds desde la línea de comandos** (CI, scripts), como `-batchmode` de Unity o `--export-release` de Godot. El código de salida es 0 si todo va bien:
+
+```powershell
+MotorVideojuego.exe --project "C:\MisJuegos\Street Demo" --build --release-config --output "D:\Builds"
+MotorVideojuego.exe --project "C:\MisJuegos\Street Demo" --release --notes "Primera versión pública" --bump minor
+```
+
+> Para distribuir un juego, compila el motor en **Release** (`cmake --build build --config Release`). Un motor Debug genera juegos que necesitan el runtime de depuración de Visual Studio, y el editor lo avisa. La versión del motor se define en `CMakeLists.txt` (`project(... VERSION 0.4.0)`) y se genera en `build/generated/Version.h`.
 
 ---
 
