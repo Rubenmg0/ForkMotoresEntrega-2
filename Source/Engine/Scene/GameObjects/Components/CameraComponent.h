@@ -105,6 +105,8 @@ public:
     bool frustumCulling = true; // descartar las mallas que quedan fuera del frustum
     bool orthographic = false;  // proyeccion ortografica (camaras de juego)
     float orthoSize = 5.0f;     // mitad del alto visible en modo ortografico (camaras de juego)
+    int targetDisplay = 0;      // display de la vista Game en el que se ve (0 = Display 1), como en Unity
+    static constexpr int MAX_DISPLAYS = 8;
 
     // Camara del editor: perspectiva / isometrica (ortografica)
     bool IsOrthographic() const { return orthographic; }

@@ -359,10 +359,14 @@ void ModuleUI::DrawHierarchyNode(GameObject* node)
 	if (!renaming)
 	{
 		EditorIcons::DrawIconLabel(labelPos, icon, iconColor, node->GetName().c_str(), nameColor);
-		if (scene->GetGameCameraObject() == node)
+		// Camaras: "Main" o el display al que apuntan (Display 2...)
+		if (const CameraComponent* camera = node->GetComponent<CameraComponent>())
 		{
-			ImGui::GetWindowDrawList()->AddText(ImVec2(rowMax.x - ImGui::CalcTextSize("Main").x - 8.0f, labelPos.y),
-				ImGui::GetColorU32(ImGuiCol_TextDisabled), "Main");
+			char tag[32];
+			if (scene->GetGameCameraObject() == node) snprintf(tag, sizeof(tag), "Main");
+			else snprintf(tag, sizeof(tag), "Display %d", camera->targetDisplay + 1);
+			ImGui::GetWindowDrawList()->AddText(ImVec2(rowMax.x - ImGui::CalcTextSize(tag).x - 8.0f, labelPos.y),
+				ImGui::GetColorU32(ImGuiCol_TextDisabled), tag);
 		}
 	}
 

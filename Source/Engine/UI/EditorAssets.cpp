@@ -718,11 +718,7 @@ void ModuleUI::DrawProjectContent()
 				if (ImGui::MenuItem(ICON_FA_FOLDER "  Folder")) openNewFolderPopup = true;
 				ImGui::EndMenu();
 			}
-			if (ImGui::MenuItem("Show in Explorer"))
-			{
-				const std::string url = "file:///" + FileSystem::ToDiskPath(assetsCurrentFolder);
-				SDL_OpenURL(url.c_str());
-			}
+			if (ImGui::MenuItem("Show in Explorer")) RevealInExplorer(assetsCurrentFolder);
 			ImGui::Separator();
 			if (ImGui::MenuItem("Refresh", "Ctrl+R")) QueueAssetOperation(AssetOperation::Refresh, std::string());
 			ImGui::EndPopup();
@@ -1000,12 +996,7 @@ void ModuleUI::DrawAssetContextMenu(const FileSystem::DirectoryEntry& entry)
 
 	ImGui::Separator();
 	if (ImGui::MenuItem("Rename", "F2")) BeginAssetRename(entry.path);
-	if (ImGui::MenuItem("Show in Explorer"))
-	{
-		const std::string folder = entry.isDirectory ? entry.path : FileSystem::GetParentPath(entry.path);
-		const std::string url = "file:///" + FileSystem::ToDiskPath(folder);
-		SDL_OpenURL(url.c_str());
-	}
+	if (ImGui::MenuItem("Show in Explorer")) RevealInExplorer(entry.path);
 	if (ImGui::MenuItem("Copy Path")) ImGui::SetClipboardText(entry.path.c_str());
 	ImGui::Separator();
 	if (ImGui::MenuItem("Delete", "Del"))

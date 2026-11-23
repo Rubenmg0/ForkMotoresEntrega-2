@@ -86,6 +86,9 @@ public:
 	int GetGameViewportWidth() const { return gameViewportWidth; }
 	int GetGameViewportHeight() const { return gameViewportHeight; }
 	void SetGameViewportVisible(bool visible) { gameViewportVisible = visible; }
+	// Display que muestra la vista Game (0 = Display 1): se dibuja la camara que apunta a el
+	void SetGameDisplay(int display) { gameDisplay = display; }
+	int GetGameDisplay() const { return gameDisplay; }
 	bool IsGameViewportVisible() const { return gameViewportVisible; }
 
 	// Aspect ratio de la vista Game (lo usa tambien el frustum de la Main Camera en la vista Scene)
@@ -119,6 +122,7 @@ private:
 
 	// Framebuffer de la vista Game
 	bool gameViewportVisible = true;
+	int gameDisplay = 0;
 	unsigned int gameFramebuffer = 0;
 	unsigned int gameTextureColorbuffer = 0;
 	unsigned int gameDepthTextureBuffer = 0;

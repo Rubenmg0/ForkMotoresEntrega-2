@@ -988,6 +988,8 @@ void ModuleUI::DrawGamePanel()
 	Scene* scene = Engine::GetInstance().scene.get();
 	const bool maximized = maximizeOnPlay && scene && scene->IsInPlayMode();
 
+	if (render) render->SetGameDisplay(gameDisplayIndex);
+
 	if (!showGame)
 	{
 		if (render && !maximized) render->SetGameViewportVisible(false);
@@ -1012,12 +1014,35 @@ void ModuleUI::DrawGamePanel()
 	ImGui::BeginChild("GameToolbar", ImVec2(0.0f, ImGui::GetFrameHeight() + 4.0f), ImGuiChildFlags_AlwaysUseWindowPadding,
 		ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 	{
-		ImGui::SetNextItemWidth(90.0f);
-		if (ImGui::BeginCombo("##Display", "Display 1"))
+		// Displays (como Unity): cada camara tiene un "Target Display"; aqui se elige cual se ve
+		char displayLabel[32];
+		snprintf(displayLabel, sizeof(displayLabel), "Display %d", gameDisplayIndex + 1);
+		ImGui::SetNextItemWidth(100.0f);
+		if (ImGui::BeginCombo("##Display", displayLabel, ImGuiComboFlags_HeightLarge))
 		{
-			ImGui::Selectable("Display 1", true);
+			const std::vector<GameObject*> cameras = scene ? scene->GetCameras() : std::vector<GameObject*>();
+			for (int display = 0; display < CameraComponent::MAX_DISPLAYS; ++display)
+			{
+				std::string names;
+				for (const GameObject* camera : cameras)
+				{
+					if (camera->GetComponent<CameraComponent>()->targetDisplay != display) continue;
+					names += names.empty() ? camera->GetName() : ", " + camera->GetName();
+				}
+				char label[32];
+				snprintf(label, sizeof(label), "Display %d", display + 1);
+				ImGui::PushID(display);
+				if (ImGui::Selectable(label, gameDisplayIndex == display)) gameDisplayIndex = display;
+				if (!names.empty())
+				{
+					ImGui::SameLine(100.0f);
+					ImGui::TextDisabled(ICON_FA_VIDEO " %s", names.c_str());
+				}
+				ImGui::PopID();
+			}
 			ImGui::EndCombo();
 		}
+		ImGui::SetItemTooltip("Shows the camera whose Target Display is this one");
 		ImGui::SameLine();
 		static const char* aspectNames[] = { "Free Aspect", "16:9 Aspect", "16:10 Aspect", "4:3 Aspect", "5:4 Aspect" };
 		ImGui::SetNextItemWidth(120.0f);
@@ -1046,13 +1071,13 @@ void ModuleUI::DrawGamePanel()
 	regionSize.y = std::max(regionSize.y, 1.0f);
 	ImGui::Dummy(regionSize);
 
-	GameObject* gameCam = scene ? scene->GetGameCameraObject() : nullptr;
-	const CameraComponent* gameCamComponent = gameCam ? gameCam->GetComponent<CameraComponent>() : nullptr;
-	if (!gameCam || !gameCam->IsActiveInHierarchy() || !gameCamComponent || !gameCamComponent->IsActive())
+	GameObject* gameCam = scene ? scene->GetCameraForDisplay(gameDisplayIndex) : nullptr;
+	if (gameCam == nullptr)
 	{
 		ImDrawList* drawList = ImGui::GetWindowDrawList();
 		drawList->AddRectFilled(regionPos, ImVec2(regionPos.x + regionSize.x, regionPos.y + regionSize.y), IM_COL32(0, 0, 0, 255));
-		const char* text = "Display 1\nNo cameras rendering";
+		char text[64];
+		snprintf(text, sizeof(text), "Display %d\nNo cameras rendering", gameDisplayIndex + 1);
 		const ImVec2 textSize = ImGui::CalcTextSize(text);
 		drawList->AddText(ImVec2(regionPos.x + (regionSize.x - textSize.x) * 0.5f, regionPos.y + (regionSize.y - textSize.y) * 0.5f),
 			ImGui::GetColorU32(ImGuiCol_Text), text);

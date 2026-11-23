@@ -472,12 +472,7 @@ bool ModuleUI::DrawMainMenuBar()
 				if (ImGui::MenuItem(ICON_FA_FOLDER "  Folder")) openNewFolderPopup = true;
 				ImGui::EndMenu();
 			}
-			if (ImGui::MenuItem("Show in Explorer"))
-			{
-				const std::string folder = FileSystem::ToDiskPath(selectedAssetPath.empty() ? assetsCurrentFolder : FileSystem::GetParentPath(selectedAssetPath));
-				const std::string url = "file:///" + folder;
-				SDL_OpenURL(url.c_str());
-			}
+			if (ImGui::MenuItem("Show in Explorer")) RevealInExplorer(selectedAssetPath.empty() ? assetsCurrentFolder : selectedAssetPath);
 			ImGui::Separator();
 			if (ImGui::MenuItem("Refresh", "Ctrl+R")) QueueAssetOperation(AssetOperation::Refresh, std::string());
 			if (ImGui::MenuItem("Reimport", nullptr, false, !selectedAssetPath.empty() && ResourceManager::IsImportable(selectedAssetPath)))
@@ -647,18 +642,27 @@ void ModuleUI::DrawToolbar()
 		}
 
 		// ----- Centro: Play / Pause / Step como un unico grupo -----
-		const ImVec2 buttonSize(buttonHeight * 1.45f, buttonHeight);
-		const float groupWidth = buttonSize.x * 3.0f + 2.0f;
-		ImGui::SameLine((ImGui::GetWindowWidth() - groupWidth) * 0.5f);
-		ImGui::SetCursorPosY((height - buttonHeight) * 0.5f);
+		// Cada boton se coloca en una posicion absoluta: con SameLine la linea de base del texto de la
+		// izquierda desplazaba el primero hacia arriba y el grupo no quedaba alineado ni centrado
+		const ImVec2 buttonSize(std::floor(buttonHeight * 1.45f), buttonHeight);
+		const float buttonGap = 1.0f;
+		const float groupWidth = buttonSize.x * 3.0f + buttonGap * 2.0f;
+		const float groupX = std::floor((ImGui::GetWindowWidth() - groupWidth) * 0.5f);
+		const float groupY = std::floor((height - buttonHeight) * 0.5f);
+		const auto placeButton = [&](int index)
+		{
+			ImGui::SetCursorPos(ImVec2(groupX + index * (buttonSize.x + buttonGap), groupY));
+		};
 
 		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(1.0f, 0.0f));
+		ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.5f, 0.5f));
 		ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 2.0f);
 		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.20f, 0.20f, 1.0f));
 		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.28f, 0.28f, 0.28f, 1.0f));
 		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.33f, 0.33f, 0.33f, 1.0f));
 
 		const bool inPlay = (state != PlayState::Stopped);
+		placeButton(0);
 		if (ToggleButton(ICON_FA_PLAY "##Play", inPlay, buttonSize))
 		{
 			if (inPlay) scene->Stop();
@@ -666,7 +670,7 @@ void ModuleUI::DrawToolbar()
 		}
 		IconTooltip(inPlay ? "Stop (Ctrl+P)" : "Play (Ctrl+P)");
 
-		ImGui::SameLine();
+		placeButton(1);
 		if (ToggleButton(ICON_FA_PAUSE "##Pause", state == PlayState::Paused, buttonSize))
 		{
 			if (state == PlayState::Stopped) { scene->Play(); scene->Pause(); }
@@ -674,20 +678,20 @@ void ModuleUI::DrawToolbar()
 		}
 		IconTooltip("Pause (Ctrl+Shift+P)");
 
-		ImGui::SameLine();
+		placeButton(2);
 		ImGui::BeginDisabled(state != PlayState::Paused);
 		if (ImGui::Button(ICON_FA_FORWARD_STEP "##Step", buttonSize)) scene->Step();
 		ImGui::EndDisabled();
 		IconTooltip("Step (Ctrl+Alt+P)");
 
 		ImGui::PopStyleColor(3);
-		ImGui::PopStyleVar(2);
+		ImGui::PopStyleVar(3);
 
 		// ----- Derecha: tiempo de juego, escala de tiempo y menu de Layout -----
 		const float layoutWidth = ImGui::CalcTextSize("Layout").x + 46.0f;
 		const float timeWidth = 150.0f;
-		ImGui::SameLine(ImGui::GetWindowWidth() - layoutWidth - timeWidth - style.WindowPadding.x - style.ItemSpacing.x);
-		ImGui::SetCursorPosY((height - ImGui::GetFrameHeight()) * 0.5f);
+		ImGui::SetCursorPos(ImVec2(ImGui::GetWindowWidth() - layoutWidth - timeWidth - style.WindowPadding.x - style.ItemSpacing.x,
+			std::floor((height - ImGui::GetFrameHeight()) * 0.5f)));
 		if (inPlay)
 		{
 			ImGui::AlignTextToFramePadding();

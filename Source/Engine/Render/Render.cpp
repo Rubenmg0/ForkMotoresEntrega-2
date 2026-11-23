@@ -1491,7 +1491,8 @@ void Render::RenderGame()
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 
 	Scene* scene = Engine::GetInstance().scene.get();
-	GameObject* gameCameraObj = scene ? scene->GetGameCameraObject() : nullptr;
+	// La vista Game dibuja la camara del display elegido (Display 1 = la Main Camera normalmente)
+	GameObject* gameCameraObj = scene ? scene->GetCameraForDisplay(gameDisplay) : nullptr;
 	CameraComponent* camera = (gameCameraObj && gameCameraObj->IsActiveInHierarchy()) ? gameCameraObj->GetComponent<CameraComponent>() : nullptr;
 
 	stats.gameCandidates = 0;

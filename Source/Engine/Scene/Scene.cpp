@@ -453,6 +453,36 @@ void Scene::RequestRestoreSnapshot(const std::string& text, const std::vector<ui
 	snapshotActive = activeUID;
 }
 
+std::vector<GameObject*> Scene::GetCameras() const
+{
+	std::vector<GameObject*> cameras;
+	std::vector<GameObject*> stack(sceneRoot.GetChildren().rbegin(), sceneRoot.GetChildren().rend());
+	while (!stack.empty())
+	{
+		GameObject* node = stack.back();
+		stack.pop_back();
+		if (node->GetComponent<CameraComponent>() != nullptr && OwnsObject(node)) cameras.push_back(node);
+		const std::vector<GameObject*>& children = node->GetChildren();
+		for (auto it = children.rbegin(); it != children.rend(); ++it) stack.push_back(*it);
+	}
+	return cameras;
+}
+
+GameObject* Scene::GetCameraForDisplay(int display) const
+{
+	const auto renders = [display](const GameObject* object)
+	{
+		const CameraComponent* camera = object ? object->GetComponent<CameraComponent>() : nullptr;
+		return camera && camera->IsActive() && object->IsActiveInHierarchy() && camera->targetDisplay == display;
+	};
+	if (renders(gameCameraPtr)) return gameCameraPtr;
+	for (GameObject* camera : GetCameras())
+	{
+		if (renders(camera)) return camera;
+	}
+	return nullptr;
+}
+
 void Scene::SetGameCamera(GameObject* cameraObject)
 {
 	if (cameraObject == nullptr || (OwnsObject(cameraObject) && cameraObject->GetComponent<CameraComponent>() != nullptr))
@@ -536,6 +566,22 @@ GameObject* Scene::CreateCamera(GameObject* parent)
 	auto newObj = std::make_unique<GameObject>(MakeUniqueName("Camera"));
 	newObj->AddComponent(std::make_unique<TransformComponent>(newObj.get()));
 	newObj->AddComponent(std::make_unique<CameraComponent>(newObj.get()));
+
+	// Cada camara nueva va al primer display que no usa ninguna otra (asi se puede ver en la
+	// vista Game eligiendo su display); la primera de la escena es la Main Camera, en el Display 1
+	bool used[CameraComponent::MAX_DISPLAYS] = {};
+	for (const GameObject* camera : GetCameras())
+	{
+		used[camera->GetComponent<CameraComponent>()->targetDisplay] = true;
+	}
+	for (int display = 0; display < CameraComponent::MAX_DISPLAYS; ++display)
+	{
+		if (!used[display])
+		{
+			newObj->GetComponent<CameraComponent>()->targetDisplay = display;
+			break;
+		}
+	}
 
 	GameObject* registered = Register(std::move(newObj), parent);
 

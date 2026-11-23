@@ -70,6 +70,11 @@ public:
 	GameObject* GetEditorCameraObject() const { return editorCameraObj.get(); }
 	GameObject* GetGameCameraObject() const { return gameCameraPtr; }
 	void SetGameCamera(GameObject* cameraObject);
+	// Todas las camaras de juego de la escena (en el orden de la Hierarchy)
+	std::vector<GameObject*> GetCameras() const;
+	// Camara que se ve en un display de la vista Game: la Main Camera si apunta a ese display; si no,
+	// la primera camara activa que apunte a el (nullptr = "No cameras rendering")
+	GameObject* GetCameraForDisplay(int display) const;
 
 	// ------------------------------- SELECCION ----------------------------------------
 	// Seleccion multiple (como Unity). El objeto "activo" es el ultimo seleccionado: es el que

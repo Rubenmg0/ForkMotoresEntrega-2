@@ -643,6 +643,25 @@ void ModuleUI::DrawCameraInspector(GameObject* selected)
 	ImGui::Unindent(12.0f);
 	if (cam->farPlane <= cam->nearPlane) cam->farPlane = cam->nearPlane + 0.1f;
 
+	// Target Display (como Unity): en que display de la vista Game se ve esta camara
+	char displayLabel[32];
+	snprintf(displayLabel, sizeof(displayLabel), "Display %d", cam->targetDisplay + 1);
+	PropertyLabel("Target Display");
+	if (ImGui::BeginCombo("##TargetDisplay", displayLabel))
+	{
+		for (int display = 0; display < CameraComponent::MAX_DISPLAYS; ++display)
+		{
+			char label[32];
+			snprintf(label, sizeof(label), "Display %d", display + 1);
+			if (ImGui::Selectable(label, cam->targetDisplay == display) && cam->targetDisplay != display)
+			{
+				undo.RecordSnapshot("Change Target Display");
+				cam->targetDisplay = display;
+			}
+		}
+		ImGui::EndCombo();
+	}
+
 	PropertyLabel("Frustum Culling");
 	ImGui::Checkbox("##FrustumCulling", &cam->frustumCulling);
 	InspectorUndoGuard("Toggle Frustum Culling");

@@ -44,6 +44,7 @@ std::unique_ptr<Component> CameraComponent::Clone(GameObject* newOwner) const
     clone->frustumCulling = this->frustumCulling;
     clone->orthographic = this->orthographic;
     clone->orthoSize = this->orthoSize;
+    clone->targetDisplay = this->targetDisplay;
     clone->movementSpeed = this->movementSpeed;
     clone->mouseSensitivity = this->mouseSensitivity;
     clone->distance = this->distance;
@@ -503,6 +504,7 @@ void CameraComponent::Save(nlohmann::json& out) const
     out["frustumCulling"] = frustumCulling;
     out["orthographic"] = orthographic;
     out["orthoSize"] = orthoSize;
+    out["targetDisplay"] = targetDisplay;
     out["active"] = active;
 }
 
@@ -514,6 +516,8 @@ void CameraComponent::Load(const nlohmann::json& in)
     JsonHelpers::Read(in, "frustumCulling", frustumCulling);
     JsonHelpers::Read(in, "orthographic", orthographic);
     JsonHelpers::Read(in, "orthoSize", orthoSize);
+    JsonHelpers::Read(in, "targetDisplay", targetDisplay);
+    targetDisplay = std::clamp(targetDisplay, 0, MAX_DISPLAYS - 1);
 
     fov = std::clamp(fov, 1.0f, 179.0f);
     nearPlane = std::max(nearPlane, 0.001f);

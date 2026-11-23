@@ -135,6 +135,8 @@ private:
 	void OpenAsset(const std::string& path, bool isDirectory);
 	void SelectAsset(const std::string& path);
 	void SetProjectFolder(const std::string& folder);
+	// Abre la carpeta en el explorador de archivos del sistema (un fichero queda seleccionado)
+	static void RevealInExplorer(const std::string& projectPath);
 	unsigned int GetAssetThumbnail(UID textureUID);   // id de OpenGL (0 si no hay miniatura)
 	void ReleaseThumbnails();
 	void BeginAssetRename(const std::string& path);
@@ -211,6 +213,7 @@ private:
 
 	// ----------------- Vista Game -----------------
 	int gameAspectIndex = 0;     // Free Aspect, 16:9, 16:10, 4:3, 5:4
+	int gameDisplayIndex = 0;    // Display 1..8 (se ve la camara cuyo Target Display es este)
 	float gameScale = 1.0f;
 	bool maximizeOnPlay = false;
 	bool gameShowStats = false;
