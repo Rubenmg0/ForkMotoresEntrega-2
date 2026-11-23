@@ -14,4 +14,9 @@ namespace EditorTheme
 
 	// Activa / quita el tinte del modo Play. Se puede llamar cada frame: solo hace algo al cambiar.
 	void SetPlayModeTint(bool enabled);
+
+	// Carga la fuente del editor (Roboto) con los iconos de Font Awesome fusionados desde
+	// EditorResources/Fonts (carpeta del motor, junto al ejecutable). Llamar tras CreateContext().
+	// La usan el editor (ModuleUI) y el Hub.
+	void LoadFonts();
 }

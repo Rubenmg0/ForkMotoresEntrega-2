@@ -1,8 +1,14 @@
 #include "EditorTheme.h"
 #include "EditorIcons.h"
 
+#include "../FileSystem/FileSystem.h"
+#include "../../Utils/Log.h"
+
 #include <imgui.h>
 #include <ImGuizmo.h>
+
+#include <filesystem>
+#include <string>
 
 namespace
 {
@@ -21,8 +27,73 @@ namespace
 	}
 }
 
+namespace
+{
+	constexpr const char* EDITOR_TEXT_FONT_FILE = "Roboto-Medium.ttf";
+	constexpr const char* EDITOR_ICON_FONT_FILE = FONT_ICON_FILE_NAME_FAS; // "fa-solid-900.ttf"
+	constexpr float EDITOR_FONT_SIZE = 15.0f; // px (Unity usa un texto pequeno y compacto)
+	// Los glifos de Font Awesome ocupan todo el alto de la fuente: a 12 px quedan centrados con el texto
+	constexpr float EDITOR_ICON_SIZE = 12.0f;
+
+	bool FileExistsUtf8(const std::string& path)
+	{
+		std::error_code ec;
+		try { return std::filesystem::is_regular_file(std::filesystem::u8path(path), ec); }
+		catch (...) { return false; }
+	}
+}
+
 namespace EditorTheme
 {
+	// =====================================================================================
+	// FUENTES: texto (.ttf) + iconos (Font Awesome 6) fusionados en una unica ImFont.
+	// Con ImGui 1.92 el tamano se puede cambiar al vuelo con PushFont(nullptr, tamano): los iconos
+	// grandes del Project y los titulos usan la misma fuente.
+	// =====================================================================================
+	void LoadFonts()
+	{
+		ImGuiIO& io = ImGui::GetIO();
+		const std::string resources = FileSystem::GetEngineResourcesDir();
+		const std::string fontsDir = resources.empty() ? std::string(FileSystem::EDITOR_FONTS_DIR) : resources + "/Fonts";
+
+		const std::string textFontPath = fontsDir + "/" + EDITOR_TEXT_FONT_FILE;
+		ImFont* textFont = nullptr;
+		if (FileExistsUtf8(textFontPath))
+		{
+			ImFontConfig textConfig;
+			textConfig.OversampleH = 3;
+			textConfig.OversampleV = 1;
+			textConfig.PixelSnapH = false;
+			textFont = io.Fonts->AddFontFromFileTTF(textFontPath.c_str(), EDITOR_FONT_SIZE, &textConfig);
+		}
+
+		if (textFont == nullptr)
+		{
+			LOG_WARNING("[ImGui] Could not load font '%s'. Using ImGui's default font.", textFontPath.c_str());
+			textFont = io.Fonts->AddFontDefault();
+		}
+		io.FontDefault = textFont;
+
+		const std::string iconFontPath = fontsDir + "/" + EDITOR_ICON_FONT_FILE;
+		if (!FileExistsUtf8(iconFontPath))
+		{
+			LOG_ERROR("[ImGui] Icon font '%s' is missing: editor icons will not be shown.", iconFontPath.c_str());
+			return;
+		}
+
+		static const ImWchar iconRanges[] = { ICON_MIN_FA, ICON_MAX_16_FA, 0 };
+		ImFontConfig iconConfig;
+		iconConfig.MergeMode = true;
+		iconConfig.PixelSnapH = true;
+		iconConfig.GlyphMinAdvanceX = EDITOR_ICON_SIZE;
+		iconConfig.OversampleH = 2;
+		iconConfig.OversampleV = 1;
+		if (io.Fonts->AddFontFromFileTTF(iconFontPath.c_str(), EDITOR_ICON_SIZE, &iconConfig, iconRanges) == nullptr)
+		{
+			LOG_ERROR("[ImGui] Could not load icon font '%s'", iconFontPath.c_str());
+		}
+	}
+
 	void ApplyUnityDark()
 	{
 		ImGuiIO& io = ImGui::GetIO();

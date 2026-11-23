@@ -11,6 +11,31 @@
 
 ---
 
+## 🧭 Maruja Hub: proyectos y versiones
+
+Al abrir `MotorVideojuego.exe` sin argumentos aparece un **splash** con el logo y la versión del motor y, después, el **Hub** (como Unity Hub):
+
+- **Proyectos recientes**: miniatura, ruta, versión del proyecto, versión del motor y última apertura. Buscador, fijar arriba, mostrar en el Explorador y quitar de la lista. Las carpetas que ya no existen se marcan en rojo.
+- **New project**: crea `<Nombre>/Assets/`, `Assets/Scenes/`, `ProjectSettings/project.json` y un `.gitignore` (excluye `Library/`), y lo abre con una escena vacía.
+- **Add**: añade una carpeta de proyecto existente (si no tiene `project.json`, se le genera).
+- **Versión del proyecto** (semver): botones *Major / Minor / Patch +1* o edición directa, en el Hub y en el editor (*File > Project Settings...*). Se guarda en `ProjectSettings/project.json`.
+- **Versión del motor**: cada proyecto apunta con qué versión de Maruja Engine se abrió. Si es más nueva que la instalada, el Hub avisa antes de abrirlo.
+- **About**: logo, versión, commit, fecha y configuración de build, equipo, librerías y licencia (también en *Help > About* del editor).
+
+Cada proyecto guarda su layout del editor en `ProjectSettings/EditorLayout.ini` y se reabre en su última escena. La lista de proyectos es por usuario: `%APPDATA%\Maruja\MarujaEngine\hub.json`.
+
+Línea de comandos:
+
+| Argumento | Efecto |
+| --- | --- |
+| *(ninguno)* | Splash + Hub |
+| `--project <carpeta>` | Abre ese proyecto directamente en el editor |
+| `--no-splash` | Hub sin splash |
+
+Desde el editor, *File > Open Hub...* vuelve al Hub. La versión del motor se define en `CMakeLists.txt` (`project(... VERSION 0.4.0)`) y se genera en `build/generated/Version.h`.
+
+---
+
 ## 🚀 Funcionalidades de la Entrega 2
 
 ### Escena inicial

@@ -10,6 +10,8 @@ build
 # (los .meta SI deben subirse al repositorio: guardan los UID y las opciones de importacion)
 Library/
 imgui_layout_a2.ini
+# Layout del editor de cada usuario (lo genera el editor dentro de cada proyecto)
+ProjectSettings/EditorLayout.ini
 
 # User-specific files
 *.rsuser

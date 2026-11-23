@@ -18,6 +18,10 @@
 #include "../ResourceManagement/Importers/ImporterManager.h"
 #include "EditorDragDrop.h"
 #include "EditorIcons.h"
+#include "EditorPlatform.h"
+#include "AboutContent.h"
+#include "../Project/ProjectInfo.h"
+#include "Version.h"
 #include "EditorTheme.h"
 #include "EditorWidgets.h"
 
@@ -51,15 +55,10 @@ namespace
 	constexpr const char* REPO_URL_ISSUES   = "https://github.com/JanCorredor/MotorVideojuego/issues";
 	constexpr const char* REPO_URL_RELEASES = "https://github.com/JanCorredor/MotorVideojuego/releases";
 
-	// ----------------------------- Fuentes del editor -----------------------------
-	constexpr const char* EDITOR_TEXT_FONT_FILE = "Roboto-Medium.ttf";
-	constexpr const char* EDITOR_ICON_FONT_FILE = FONT_ICON_FILE_NAME_FAS; // "fa-solid-900.ttf"
-	constexpr float EDITOR_FONT_SIZE = 15.0f; // px (Unity usa un texto pequeno y compacto)
-	// Los glifos de Font Awesome ocupan todo el alto de la fuente: a 12 px quedan centrados con el texto
-	constexpr float EDITOR_ICON_SIZE = 12.0f;
-
 	// Fichero de layout. Nombre nuevo: la primera vez se crea la disposicion de Unity
 	constexpr const char* LAYOUT_INI_FILE = "imgui_layout_unity.ini";
+	constexpr const char* PROJECT_LAYOUT_INI_FILE = "ProjectSettings/EditorLayout.ini";
+	constexpr const char* STREET_MODEL_ASSET = "Assets/Street/StreetEnvironment.fbx";
 
 	void OpenWebURL(const char* url)
 	{
@@ -113,14 +112,24 @@ bool ModuleUI::Start()
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
 	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 	io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
-	io.IniFilename = LAYOUT_INI_FILE;
+	// Layout por proyecto (ProjectSettings/EditorLayout.ini). Sin proyecto activo, el fichero de siempre
+	if (Project::HasActive())
+	{
+		FileSystem::CreateDirectories(FileSystem::PROJECT_SETTINGS_DIR);
+		layoutIniPath = FileSystem::ToDiskPath(PROJECT_LAYOUT_INI_FILE);
+	}
+	else
+	{
+		layoutIniPath = LAYOUT_INI_FILE;
+	}
+	io.IniFilename = layoutIniPath.c_str();
 
 	// Las ventanas solo se mueven arrastrando su barra de titulo (arrastrar dentro de la vista
 	// Scene es navegar, mover el gizmo o seleccionar con un rectangulo)
 	io.ConfigWindowsMoveFromTitleBarOnly = true;
 	io.ConfigDockingWithShift = false;
 
-	LoadEditorFonts();
+	EditorTheme::LoadFonts();
 	EditorTheme::ApplyUnityDark();
 	RegisterSettingsHandler();
 
@@ -175,53 +184,6 @@ void ModuleUI::WriteEditorCameraSetting(ImGuiTextBuffer* buffer)
 		state.distance, state.yaw, state.pitch, state.orthographic ? 1 : 0, camera->GetMovementSpeed());
 }
 
-// =====================================================================================
-// FUENTES: texto (.ttf) + iconos (Font Awesome 6) fusionados en una unica ImFont.
-// Con ImGui 1.92 el tamano se puede cambiar al vuelo con PushFont(nullptr, tamano): los iconos
-// grandes del Project y los titulos usan la misma fuente.
-// =====================================================================================
-void ModuleUI::LoadEditorFonts()
-{
-	ImGuiIO& io = ImGui::GetIO();
-
-	const std::string textFontPath = FileSystem::Join(FileSystem::EDITOR_FONTS_DIR, EDITOR_TEXT_FONT_FILE);
-	ImFont* textFont = nullptr;
-	if (FileSystem::Exists(textFontPath))
-	{
-		ImFontConfig textConfig;
-		textConfig.OversampleH = 3;
-		textConfig.OversampleV = 1;
-		textConfig.PixelSnapH = false;
-		textFont = io.Fonts->AddFontFromFileTTF(FileSystem::ToDiskPath(textFontPath).c_str(), EDITOR_FONT_SIZE, &textConfig);
-	}
-
-	if (textFont == nullptr)
-	{
-		LOG_WARNING("[ImGui] Could not load font '%s'. Using ImGui's default font.", textFontPath.c_str());
-		textFont = io.Fonts->AddFontDefault();
-	}
-	io.FontDefault = textFont;
-
-	const std::string iconFontPath = FileSystem::Join(FileSystem::EDITOR_FONTS_DIR, EDITOR_ICON_FONT_FILE);
-	if (!FileSystem::Exists(iconFontPath))
-	{
-		LOG_ERROR("[ImGui] Icon font '%s' is missing: editor icons will not be shown.", iconFontPath.c_str());
-		return;
-	}
-
-	static const ImWchar iconRanges[] = { ICON_MIN_FA, ICON_MAX_16_FA, 0 };
-	ImFontConfig iconConfig;
-	iconConfig.MergeMode = true;
-	iconConfig.PixelSnapH = true;
-	iconConfig.GlyphMinAdvanceX = EDITOR_ICON_SIZE;
-	iconConfig.OversampleH = 2;
-	iconConfig.OversampleV = 1;
-	if (io.Fonts->AddFontFromFileTTF(FileSystem::ToDiskPath(iconFontPath).c_str(), EDITOR_ICON_SIZE, &iconConfig, iconRanges) == nullptr)
-	{
-		LOG_ERROR("[ImGui] Could not load icon font '%s'", iconFontPath.c_str());
-	}
-}
-
 bool ModuleUI::PreUpdate()
 {
 #ifdef _DEBUG
@@ -274,7 +236,9 @@ bool ModuleUI::Update(float dt)
 	DrawResourcesPanel();
 	DrawDepthBufferPanel();
 	DrawAboutPanel();
+	DrawProjectSettingsPanel();
 	DrawMaximizedGameWindow();
+	UpdateWindowTitle();
 
 	// Ventanas modales (fuera de cualquier ventana para que OpenPopup y BeginPopupModal coincidan)
 	DrawSceneFilePopups();
@@ -419,7 +383,7 @@ bool ModuleUI::DrawMainMenuBar()
 				if (!anyScene) ImGui::TextDisabled("No scenes saved in Assets");
 				ImGui::EndMenu();
 			}
-			if (ImGui::MenuItem("Load Street Environment") && scene) scene->RequestDefaultScene();
+			if (FileSystem::Exists(STREET_MODEL_ASSET) && ImGui::MenuItem("Load Street Environment") && scene) scene->RequestDefaultScene();
 
 			ImGui::Separator();
 			if (ImGui::MenuItem("Save", "Ctrl+S", false, !playing) && scene)
@@ -429,6 +393,14 @@ bool ModuleUI::DrawMainMenuBar()
 			}
 			if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S", false, !playing)) openSaveScenePopup = true;
 			if (playing) ImGui::TextDisabled("(Stop Play mode to save)");
+
+			ImGui::Separator();
+			if (ImGui::MenuItem(ICON_FA_GEAR "  Project Settings...", nullptr, false, Project::HasActive())) showProjectSettings = true;
+			if (ImGui::MenuItem(ICON_FA_CUBES "  Open Hub...", nullptr, false, !playing))
+			{
+				// El Hub es otra instancia del ejecutable: se lanza y este editor se cierra
+				if (EditorPlatform::LaunchSelf({ "--no-splash" })) continueRunning = false;
+			}
 
 			ImGui::Separator();
 			if (ImGui::MenuItem("Exit", "Alt+F4")) continueRunning = false;
@@ -558,7 +530,7 @@ bool ModuleUI::DrawMainMenuBar()
 			if (ImGui::MenuItem("Report a Bug")) OpenWebURL(REPO_URL_ISSUES);
 			if (ImGui::MenuItem("Download Latest")) OpenWebURL(REPO_URL_RELEASES);
 			ImGui::Separator();
-			ImGui::MenuItem("About MotorVideojuego", nullptr, &showAbout);
+			ImGui::MenuItem("About " ENGINE_NAME, nullptr, &showAbout);
 			ImGui::EndMenu();
 		}
 
@@ -1534,50 +1506,10 @@ void ModuleUI::DrawAboutPanel()
 
 	if (!showAbout) return;
 
-	ImGui::SetNextWindowSize(ImVec2(520, 440), ImGuiCond_FirstUseEver);
-	if (ImGui::Begin("About MotorVideojuego", &showAbout))
+	ImGui::SetNextWindowSize(ImVec2(620, 560), ImGuiCond_FirstUseEver);
+	if (ImGui::Begin("About " ENGINE_NAME "###About", &showAbout))
 	{
-		const auto& hw = Engine::GetInstance().GetHardwareMetrics();
-		ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.4f);
-		ImGui::TextUnformatted("MotorVideojuego 3D Engine");
-		ImGui::PopFont();
-		ImGui::TextDisabled("v0.3 - Unity-style editor");
-		ImGui::TextWrapped("Educational 3D engine written in C++ with a modular Entity/Component architecture and an integrated editor.");
-
-		ImGui::SeparatorText("Team");
-		ImGui::BulletText("Jan Corredor");
-		ImGui::BulletText("Ruben Mateo Guerrero");
-		ImGui::BulletText("Marc Jimenez Marquina");
-
-		ImGui::SeparatorText("Libraries");
-		ImGui::BulletText("SDL3 v%s (window, context, input and audio)", hw.sdlVersion.c_str());
-		ImGui::BulletText("OpenGL %s + GLAD (3D rendering)", hw.openglVersion.c_str());
-		ImGui::BulletText("Dear ImGui v%s (editor UI and docking) + ImGuizmo", hw.imguiVersion.c_str());
-		ImGui::BulletText("Assimp v%s (3D model import)", hw.assimpVersion.c_str());
-		ImGui::BulletText("DevIL v%s (texture loading)", hw.devilVersion.c_str());
-		ImGui::BulletText("GLM, Tracy Profiler, nlohmann/json, Font Awesome 6");
-
-		ImGui::SeparatorText("MIT License");
-		ImGui::BeginChild("MITLicenseChild", ImVec2(0, 130), ImGuiChildFlags_Borders);
-		ImGui::TextWrapped(
-			"MIT License\n\n"
-			"Copyright (c) 2026 MotorVideojuego Team\n\n"
-			"Permission is hereby granted, free of charge, to any person obtaining a copy "
-			"of this software and associated documentation files (the \"Software\"), to deal "
-			"in the Software without restriction, including without limitation the rights "
-			"to use, copy, modify, merge, publish, distribute, sublicense, and/or sell "
-			"copies of the Software, and to permit persons to whom the Software is "
-			"furnished to do so, subject to the following conditions:\n\n"
-			"The above copyright notice and this permission notice shall be included in all "
-			"copies or substantial portions of the Software.\n\n"
-			"THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR "
-			"IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, "
-			"FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE "
-			"AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER "
-			"LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, "
-			"OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE "
-			"SOFTWARE.");
-		ImGui::EndChild();
+		AboutContent::Draw(static_cast<float>(ImGui::GetTime()));
 	}
 	ImGui::End();
 }

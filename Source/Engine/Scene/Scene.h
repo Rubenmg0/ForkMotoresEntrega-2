@@ -167,6 +167,9 @@ public:
 private:
 	void CreateEditorCamera();
 	void CreateDefaultScene();
+
+	// Apunta la escena en el project.json del proyecto abierto (se reabre al volver a abrirlo)
+	void RememberProjectScene(const std::string& path);
 	void ClearScene();
 	void ProcessPendingDestructions();
 	void RebuildOctree();

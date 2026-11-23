@@ -4,7 +4,7 @@
 // Iconos y paleta del editor.
 //
 // Los iconos son glifos de la fuente "Font Awesome 6 Free" (fa-solid-900.ttf). Esa fuente se
-// fusiona con la fuente de texto del editor en ModuleUI::LoadEditorFonts() (MergeMode), asi
+// fusiona con la fuente de texto del editor en EditorTheme::LoadFonts() (MergeMode), asi
 // que un icono no es mas que un caracter Unicode dentro de un texto normal de ImGui:
 //
 //      ImGui::Button(ICON_FA_PLAY "##Play");          // boton solo con icono

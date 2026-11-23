@@ -31,6 +31,11 @@ namespace FileSystem
 	// Recursos propios del editor (fuentes .ttf de la interfaz). Estan fuera de Assets/ a proposito:
 	// no son assets del juego, asi que ni se importan a Library ni aparecen en la ventana Assets
 	constexpr const char* EDITOR_FONTS_DIR = "EditorResources/Fonts";
+	constexpr const char* ENGINE_RESOURCES_DIR = "EditorResources";
+
+	// Configuracion del proyecto (fichero de proyecto, layout del editor...). Fuera de Assets/
+	constexpr const char* PROJECT_SETTINGS_DIR = "ProjectSettings";
+	constexpr const char* PROJECT_FILE = "ProjectSettings/project.json";
 
 	// Extensiones de los ficheros propios del motor
 	constexpr const char* META_EXTENSION = ".meta";
@@ -41,7 +46,18 @@ namespace FileSystem
 
 	// Busca la carpeta Assets (junto al directorio de trabajo o junto al ejecutable) y crea
 	// las carpetas de Library si no existen. Debe llamarse una vez al arrancar el motor.
+	// Si antes se llamo a SetProjectRoot() (el Hub eligio un proyecto) se usa esa carpeta.
 	bool Init();
+
+	// Fija la carpeta raiz del proyecto (ruta de disco UTF-8). Llamar antes de Init().
+	void SetProjectRoot(const std::string& diskPathUtf8);
+
+	// Carpeta de disco con los recursos del motor (EditorResources/), buscada junto al ejecutable
+	// y en sus carpetas padre. No depende del proyecto abierto. "" si no se encuentra.
+	const std::string& GetEngineResourcesDir();
+
+	// Carpeta del ejecutable en UTF-8 (con '/' final), "" si no se conoce
+	std::string GetExecutableDir();
 
 	// Carpeta raiz del proyecto tal y como se usa para abrir ficheros ("..", "." o absoluta)
 	const std::string& GetProjectRoot();

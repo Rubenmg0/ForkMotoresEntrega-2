@@ -11,6 +11,7 @@
 #include "GameObjects/Components/CameraComponent.h"
 #include "../Render/Primitives/GeometryGenerator.h"
 #include "../FileSystem/FileSystem.h"
+#include "../Project/ProjectInfo.h"
 
 #include "../ResourceManagement/ResourceManager.h"
 #include "../ResourceManagement/ResourceModel.h"
@@ -51,10 +52,38 @@ bool Scene::Awake()
 
 bool Scene::Start()
 {
-	LOG("[Scene] Configurando escena por defecto...");
 	CreateEditorCamera();
-	CreateDefaultScene();
+
+	// Escena inicial del proyecto:
+	//   1) la ultima escena abierta / guardada (project.json -> lastScene)
+	//   2) la calle de ejemplo, si el proyecto la tiene
+	//   3) una escena vacia (proyectos nuevos creados desde el Hub)
+	const std::string lastScene = Project::HasActive() ? Project::GetActive().lastScene : std::string();
+	if (!lastScene.empty() && FileSystem::Exists(lastScene))
+	{
+		LOG("[Scene] Abriendo la ultima escena del proyecto: '%s'", lastScene.c_str());
+		RequestLoadScene(lastScene);
+	}
+	else if (FileSystem::Exists(DEFAULT_MODEL_ASSET))
+	{
+		LOG("[Scene] Configurando escena por defecto...");
+		CreateDefaultScene();
+	}
+	else
+	{
+		LOG("[Scene] Proyecto sin escenas: se crea una escena vacia");
+		RequestNewScene();
+	}
 	return true;
+}
+
+void Scene::RememberProjectScene(const std::string& path)
+{
+	if (!Project::HasActive()) return;
+	ProjectInfo& project = Project::GetActive();
+	if (project.lastScene == path) return;
+	project.lastScene = path;
+	Project::SaveActive();
 }
 
 void Scene::CreateEditorCamera()
@@ -229,6 +258,7 @@ bool Scene::PreUpdate()
 		else
 		{
 			currentScenePath = path;
+			RememberProjectScene(path);
 			LOG("[Scene] Escena '%s' cargada (%zu GameObjects)", path.c_str(), sceneEntities.size());
 		}
 	}
@@ -1133,6 +1163,12 @@ bool Scene::SaveScene(const std::string& projectPath)
 	}
 
 	currentScenePath = path;
+	if (Project::HasActive())
+	{
+		Project::GetActive().lastModifiedAt = Project::Now();
+		Project::GetActive().lastScene.clear(); // fuerza el guardado de project.json
+	}
+	RememberProjectScene(path);
 	LOG("[Scene] Escena guardada en '%s' (%zu GameObjects)", path.c_str(), sceneEntities.size());
 	return true;
 }

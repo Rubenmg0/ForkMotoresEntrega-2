@@ -51,7 +51,6 @@ public:
 
 private:
 	// ----------------- Arranque y frame -----------------
-	void LoadEditorFonts();
 	void RegisterSettingsHandler();
 	void RenderUI();
 	void DrawDockSpaceAndLayout();
@@ -120,6 +119,10 @@ private:
 	void DrawAboutPanel();
 	void DrawDepthBufferPanel();
 
+	// ----------------- Proyecto (EditorProjectSettings.cpp) -----------------
+	void DrawProjectSettingsPanel();
+	void UpdateWindowTitle();       // "Maruja Engine 0.4.0 - Proyecto v1.0.0 - Escena"
+
 	// ----------------- Project y Resources (EditorAssets.cpp) -----------------
 	void DrawProjectPanel();
 	void DrawProjectToolbar();
@@ -175,6 +178,7 @@ private:
 	bool showConsole = true;
 	bool showConfiguration = true;
 	bool showAbout = false;
+	bool showProjectSettings = false;
 	bool showProject = true;
 	bool showResources = true;
 
@@ -264,7 +268,14 @@ private:
 	int selectedLogIndex = -1;
 
 	// ----------------- Configuration -----------------
-	char windowTitleBuffer[128] = "Motor Videojuego";
+	char windowTitleBuffer[128] = "Maruja Engine";
+	std::string autoWindowTitle;    // ultimo titulo puesto por UpdateWindowTitle()
+	std::string layoutIniPath;      // io.IniFilename apunta aqui (debe vivir mientras exista el contexto)
+
+	// ----------------- Project Settings -----------------
+	char projectNameBuffer[128] = "";
+	char projectDescriptionBuffer[512] = "";
+	bool projectBuffersLoaded = false;
 
 	// ----------------- Project -----------------
 	std::string assetsCurrentFolder = FileSystem::ASSETS_DIR;

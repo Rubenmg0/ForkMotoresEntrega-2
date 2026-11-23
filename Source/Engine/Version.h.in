@@ -1,0 +1,24 @@
+#pragma once
+
+// =====================================================================================
+// Version y marca del motor. ESTE FICHERO SE GENERA: lo escribe CMake (configure_file) en
+// build/generated/Version.h a partir de Source/Engine/Version.h.in. Para subir de version
+// cambia project(... VERSION x.y.z) en CMakeLists.txt.
+// =====================================================================================
+
+#define ENGINE_NAME           "@ENGINE_NAME@"
+#define ENGINE_VERSION_MAJOR  @PROJECT_VERSION_MAJOR@
+#define ENGINE_VERSION_MINOR  @PROJECT_VERSION_MINOR@
+#define ENGINE_VERSION_PATCH  @PROJECT_VERSION_PATCH@
+#define ENGINE_VERSION_STRING "@PROJECT_VERSION@"
+#define ENGINE_GIT_HASH       "@ENGINE_GIT_HASH@"
+#define ENGINE_CONFIGURE_DATE "@ENGINE_CONFIGURE_DATE@"
+
+// Fecha y hora de compilacion del fichero que lo incluya
+#define ENGINE_BUILD_DATE     __DATE__ " " __TIME__
+
+#if defined(_DEBUG)
+	#define ENGINE_BUILD_CONFIG "Debug"
+#else
+	#define ENGINE_BUILD_CONFIG "Release"
+#endif
